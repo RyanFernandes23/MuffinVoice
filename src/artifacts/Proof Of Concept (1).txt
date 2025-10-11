@@ -1,0 +1,46 @@
+Proof of Concept: Boundary Alert System Using
+OpenCV
+Overview
+Project Name: Boundary Alert System using OpenCV with Geo-fencing
+Problem Statement: Frontline workers often lack awareness of hazardous zones in industrial
+environments, resulting in injuries or fatalities. This system provides automated detection and alerting
+when workers enter critical danger zones.
+Motivation: Every year, numerous frontline workers suffer or die due to inadequate safety protocols,
+missing protective gear, and undefined danger boundaries. The developer observed workers unknowingly
+walking into danger zones without proper equipment. As an engineer, this inspired the creation of a system
+to minimize such avoidable risks using accessible technology.
+Scope of the Proof of Concept
+Implemented Features: - Real-time drawing of custom danger zones (geo-fence) using OpenCV. -
+Detection of human presence using a YOLOv8 pretrained model. - Verification of proper personal protective
+equipment (PPE) using object detection. - Triggering alerts when a person enters the danger zone without
+required gear.
+Tech Stack: - OpenCV: For real-time video processing and drawing overlays. - YOLOv8 (Ultralytics):
+Pretrained model for PPE detection. - NumPy: To compute geometric operations like polygon boundaries.
+Out of Scope / Future Work: - Graphical User Interface (GUI) for interaction and configuration. -
+Centralized monitoring dashboard. - Integration with external alerting systems (e.g. SMS, sirens, etc.). -
+Dynamic geo-fence repositioning via object tracking for camera movement compensation.
+How It Works
+1. Input is either a live camera stream or a video file.
+2. OpenCV captures frames from the video source.
+3. Each frame is resized to 1280x720 resolution.
+4. The resized frame is passed to the YOLOv8 model for inference.
+5. YOLO returns detected classes and bounding box coordinates.
+6. Bounding boxes and labels are drawn onto the frame.
+7. A polygon function draws closed-loop boundaries (geo-fence) using cv2.polylines .
+8. These boundary points are stored in an array.
+9. For each detected person, the system computes the centroid and checks whether it lies within any
+defined boundary.
+10. If a person is inside a danger zone, an alert message is overlaid on the frame.
+111. The processed video with visual overlays is displayed and also saved as a video file.
+Results
+Outcome: - The system functioned as expected during tests.
+Limitations: - Real-time performance is poor on low-end machines without a dedicated GPU. - No GUI is
+currently implemented. - Frame rate is low, affecting responsiveness. - Geo-fence is static — does not adapt
+to camera movement.
+Improvements: - Use a more optimized model with better speed and accuracy. - Add object tracking to
+identify and monitor individual people. - Add geo-fence tracking logic so boundaries move in sync with
+camera motion. - Alert specifically who crossed into danger zones or lacks PPE. - Improve frame rate for
+real-time applications. - Develop a user-friendly GUI for configuration and control.
+Metrics
+• Precision (mAP@0.5 for bounding boxes): 0.27342 (range: 0.0 - 1.0)
+2

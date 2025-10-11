@@ -1,0 +1,10 @@
+1. we should not do live streaming by creating a manifest file and all because, the we are generatting 
+    right now are not fixed length, like 10 sec, this variable length might violate HLS. Also we need full duration of the file so that while playing we know the length of the file this cannot be known with this method.
+
+2. We have another approach, we upload a file get the chunks.json to the user, user keeps invoking the chunks.json to get the next chunk. but this again comes under case of live streaming with no known duration.
+
+3. we could compute few audio files or all the audio files for this chunks.json in the backend before passing it to the user. then create a manifest file for the user and play it.
+
+4. we could compute few audio files or all the audio files for this chunks.json in the backend before passing it to the user. then create a manifest file for the user and play it but the audio files generated would be for one voice only, if the user wants to change the voice, we need to recompute the audio files for the new voice. but this significantly avoids the need to repeat computation for all the text chunks as in live streaming.
+
+from my view the best approach would be 4. Tell me what are your thoughts on this do you have a better approach than this.
