@@ -16,7 +16,7 @@ import boto3
 # Assume your local modules are structured correctly
 from src.TextExtractor.text_extractor import TextExtractor
 from src.Chunker.chunker import segment_text
-from src.api.worker import generate_and_save_manifest_task
+from src.TTS_Workers.workflows import generate_and_save_manifest_workflow
 
 # --- FastAPI App Setup ---
 app = FastAPI(
@@ -95,7 +95,7 @@ async def upload_file(
         )
 
         # 3. Enqueue Celery task to process the entire job for the default voice
-        generate_and_save_manifest_task.delay(user_id, job_id, voice)
+        generate_and_save_manifest_workflow.delay(user_id, job_id, voice)
             
         return {
             "message": "Job accepted and is being processed in the background.",

@@ -24,22 +24,22 @@ def get_s3_client():
 
 def get_audio_duration_seconds(audio_bytes: bytes) -> float:
         try:
-            mp3 = mutagen.mp3.MP3(io.BytesIO(audio_bytes))  # ✅ Fixed
+            mp3 = mutagen.mp3.MP3(io.BytesIO(audio_bytes))
             return mp3.info.length
         except mutagen.MutagenError:
             return 0.0
 
-@celery_app.task(bind=True, acks_late=True, max_retries=3)
+@celery_app.task
 def generate_and_save_manifest_task(self, user_id, job_id, voice):
     """
     Generates all audio chunks for a given job & voice,
     uploads to S3, and creates a manifest file.
     """
+    # task1
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}"
     manifest_key = f"{s3_prefix}/manifests/{voice}.json"
 
-    # ✅ Idempotency check – skip if already exists
     try:
         s3.head_object(Bucket=S3_BUCKET_NAME, Key=manifest_key)
         return f"Manifest for job {job_id}, voice {voice} already exists. Skipping."
@@ -48,13 +48,16 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
             raise
 
     try:
+        # get chunk.json
         chunks_response = s3.get_object(Bucket=S3_BUCKET_NAME, Key=f"{s3_prefix}/chunks.json")
         all_text_chunks = json.loads(chunks_response['Body'].read())
 
         chunk_metadata = []
 
         for i, chunk_text in enumerate(all_text_chunks):
+            # task2
             try:
+                # get speech
                 result = tts_generator(chunk_text, voice)
 
                 # Convert generator to full bytes
@@ -64,8 +67,9 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
                     audio_bytes = b''.join(result)
 
                 duration_sec = get_audio_duration_seconds(audio_bytes)
-
                 s3_key = f"{s3_prefix}/audio/{voice}/{i}.mp3"
+
+                # push bytes to s3
                 s3.put_object(
                     Bucket=S3_BUCKET_NAME, Key=s3_key,
                     Body=audio_bytes, ContentType="audio/mpeg"
@@ -74,8 +78,7 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
             except Exception as chunk_error:
                 print(f"Failed to process chunk {i} for job {job_id}: {chunk_error}")
                 continue
-
-        # ✅ If no chunks succeeded → retry instead of pretending success
+        # task3
         if not chunk_metadata:
             raise ValueError("All chunks failed — retrying task.")
 

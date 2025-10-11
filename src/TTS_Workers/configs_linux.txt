@@ -1,0 +1,8 @@
+# Terminal 1: Start a worker for the gatekeeper/orchestration tasks (usually needs fewer resources)
+celery -A src.TTS_Workers.celery_config worker --loglevel=info --concurrency=2 -Q gatekeeper_queue
+
+# Terminal 2: Start a worker for chunk processing (needs HIGH concurrency for parallel work)
+celery -A src.TTS_Workers.celery_config worker --loglevel=info --concurrency=8 -Q chunk_processing_queue
+
+# Terminal 3: Start a worker for manifest assembly (needs moderate resources)
+celery -A src.TTS_Workers.celery_config worker --loglevel=info --concurrency=2 -Q manifest_assembly_queue
