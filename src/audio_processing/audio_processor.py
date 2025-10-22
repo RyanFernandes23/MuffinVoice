@@ -9,11 +9,10 @@ client = OpenAI(
 
 
 def tts_generator(text: str, voice: str = "af_bella"):
-    with client.audio.speech.with_streaming_response.create(
+    response = client.audio.speech.with_streaming_response.create(
         model="kokoro",
         voice=voice,
-        response_format="mp3",   # 16-bit signed PCM frames
+        response_format="mp3",
         input=text,
-    ) as response:
-        for chunk in response.iter_bytes(chunk_size=1024):
-            yield chunk
+    )
+    return response
