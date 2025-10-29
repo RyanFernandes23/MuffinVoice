@@ -1,26 +1,73 @@
+import logging
+# filepath: c:\Users\Hp\OneDrive\Desktop\WikiVoice\src\api\main.py
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from uuid import uuid4
-from src.TTS_Workers.tasks import process_file_task,process_speeches,get_s3_client  # Ensure actor name matches
+from src.TTS_Workers.tasks import process_speeches,get_s3_client,update_job_status  # Ensure actor name matches
 import redis
+from src.TextExtractor.text_extractor import TextExtractor
+from src.Chunker.chunker import segment_text
+from src.TextCleaner.cleaner import TTSTextCleaner
 import os
+from src.utils.RedisClient import redis_client
 from fastapi.responses import FileResponse,Response
+from fastapi.staticfiles import StaticFiles
+import json
+from dotenv import load_dotenv
+load_dotenv()
 
-
-# for job status update
-redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 def set_job_status(job_id: str, status: str, extra: dict = None):
     data = {"status": status}
     if extra:
         data.update(extra)
-    redis_client.hmset(f"job:{job_id}", data)
+    redis_client.hset(f"job:{job_id}", data)
+    logger.info(f"Job {job_id} status updated to {status}")
 
 def get_job_status(job_id: str):
-    return redis_client.hgetall(f"job:{job_id}")
-app = FastAPI(title="TTS API with Dramatiq")
+    job_status = redis_client.hgetall(f"job:{job_id}")
+    logger.info(f"Job {job_id} status retrieved: {job_status}")
+    return job_status
 
+app = FastAPI(title="TTS API with Dramatiq")
+s3 = get_s3_client()
+
+def process_file_task(user_id, job_id, file_path, voice):
+    update_job_status(job_id, "processing")
+    try:
+        logging.info(f"Starting process_file_task for job {job_id} with file {file_path}")
+        cleaner = TTSTextCleaner()
+        extractor = TextExtractor(file_path)
+        full_text = extractor.extract_file()
+        cleaned_text = cleaner(full_text)
+        text_chunks = segment_text(cleaned_text)
+        logging.info(f"extraction and chunking completed")
+
+        s3_prefix = f"{user_id}/{job_id}"
+        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json",
+                      Body=json.dumps(text_chunks).encode("utf-8"),
+                      ContentType="application/json")
+        logging.info(f"appended chunks.json to {s3_prefix}")
+        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/cleaned_text.txt",
+                      Body=cleaned_text.encode("utf-8"),
+                      ContentType="text/plain")
+        logging.info(f"appended cleaned_txt to {s3_prefix}")
+
+        os.remove(file_path)
+        del full_text, cleaned_text, text_chunks, cleaner, extractor
+        logging.info(f"[TASK] Completed text extraction for {file_path}")
+
+        # Trigger next step: process all chunks
+        process_speeches.send(user_id, job_id, voice)
+        logging.info(f"Queued process_speeches for job {job_id}")
+    except Exception as e:
+        update_job_status(job_id, f"failed: {str(e)}")
+        logging.error(f"process_file_task failed for job {job_id}: {e}", exc_info=True)
+        raise
 @app.post("/upload_file")
 async def upload_file(
     file: UploadFile = File(...),
@@ -42,7 +89,9 @@ async def upload_file(
             f.write(chunk)
 
     # Trigger Dramatiq background job
-    process_file_task.send(user_id,job_id,str(temp_path),voice)
+    process_file_task(user_id,job_id,str(temp_path),voice)
+    logger.info(f"File uploaded for user {user_id}, job_id {job_id}, voice {voice}")
+
 
     return {
         "message": "File uploaded. processing speech.",
@@ -54,16 +103,52 @@ async def upload_file(
 async def job_status(job_id: str):
     data = get_job_status(job_id)
     if not data:
+        logger.warning(f"Job ID {job_id} not found.")
         raise HTTPException(status_code=404, detail="Job ID not found.")
     return data
 
 @app.get("/stream/{user_id}/{job_id}/{voice}/manifest.m3u8")
 async def serve_manifest(user_id: str, job_id: str, voice: str):
-    s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}/manifest.m3u8"
     
     # Download manifest temporarily
-    obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
-    content = obj["Body"].read()
+    try:
+        obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
+        content = obj["Body"].read()
+        logger.info(f"Manifest file streamed for user {user_id}, job_id {job_id}, voice {voice}")
+        return Response(content, media_type="application/vnd.apple.mpegurl")
+    except Exception as e:
+        logger.error(f"Error streaming manifest file for user {user_id}, job_id {job_id}, voice {voice}: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving manifest file")
 
-    return Response(content, media_type="application/vnd.apple.mpegurl")
+@app.get("/stream/{user_id}/{job_id}/{voice}/{speech_index}")
+async def serve_speech(user_id: str, job_id: str, voice: str, speech_index: str):
+    s3_prefix = f"{user_id}/{job_id}/voices/{voice}/{speech_index}"
+    
+    try:
+        # Get the MP3 file from S3 (fixed: Key not key)
+        obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
+        content = obj["Body"].read()
+        
+        logger.info(f"Served {speech_index} for user {user_id}, job {job_id}, voice {voice}")
+        
+        # Return audio with proper MIME type
+        return Response(
+            content=content,
+            media_type="audio/mpeg",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(content)),
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+        
+    except s3.exceptions.NoSuchKey:
+        logger.error(f"Audio file not found: {s3_prefix}")
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    except Exception as e:
+        logger.error(f"Error serving audio {s3_prefix}: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving audio file")
+
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

@@ -1,7 +1,7 @@
 from wtpsplit import SaT
 
 # Pick a model, e.g., sat-3l-sm (good speed + quality)
-sat = SaT("sat-9l-sm")
+sat = SaT("sat-3l-sm")
 
 # Optional: use half-precision + GPU if available
 # sat = sat.half().to("cuda")

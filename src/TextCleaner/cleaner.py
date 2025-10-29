@@ -1,5 +1,5 @@
 from cleantext import clean
-from cleaner_stage1 import TTSTextCleaner
+from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
 import os
 
 def TextCleaner(text):
