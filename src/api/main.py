@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse,Response
 from fastapi.staticfiles import StaticFiles
 import json
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 # Configure logging
@@ -34,6 +35,16 @@ def get_job_status(job_id: str):
     return job_status
 
 app = FastAPI(title="TTS API with Dramatiq")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 s3 = get_s3_client()
 
 def process_file_task(user_id, job_id, file_path, voice):
@@ -72,7 +83,7 @@ def process_file_task(user_id, job_id, file_path, voice):
 async def upload_file(
     file: UploadFile = File(...),
     user_id: str = Header(..., alias="X-User-ID"),
-    voice: str = "af_bella"
+    voice: str = Header("af_bella", alias="voice")  # Default voice is af_bella if not provided
 ):
     # Create upload dir if missing
     upload_dir = Path("uploads")
