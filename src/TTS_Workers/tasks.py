@@ -61,7 +61,7 @@ def process_speeches(user_id, job_id, voice):
     
     try:
         logging.info(f"Starting process_speeches for job {job_id}")
-        response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
+        response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json") # using c2 cleaned json
         chunks = json.loads(response["Body"].read().decode("utf-8"))
 
         # Initialize empty manifest file

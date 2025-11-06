@@ -8,7 +8,8 @@ from src.TTS_Workers.tasks import process_speeches,get_s3_client,update_job_stat
 import redis
 from src.TextExtractor.text_extractor import TextExtractor
 from src.Chunker.chunker import segment_text
-from src.TextCleaner.cleaner import TTSTextCleaner
+from src.TextCleaner.cleaner import cleaner_stage_2
+from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
 import os
 from src.utils.RedisClient import redis_client
 from fastapi.responses import FileResponse,Response
@@ -49,27 +50,41 @@ s3 = get_s3_client()
 
 def process_file_task(user_id, job_id, file_path, voice):
     update_job_status(job_id, "processing")
+    c1_chunks = []
+    c2_chunks = []
     try:
         logging.info(f"Starting process_file_task for job {job_id} with file {file_path}")
-        cleaner = TTSTextCleaner()
+        cleaner1 = TTSTextCleaner()
+
         extractor = TextExtractor(file_path)
         full_text = extractor.extract_file()
-        cleaned_text = cleaner(full_text)
-        text_chunks = segment_text(cleaned_text)
+        text_chunks = segment_text(full_text)
+        for chunk in text_chunks:
+            cleaned_chunk1 = cleaner1(chunk)
+            c1_chunks.append(cleaned_chunk1)
+            cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1)
+            c2_chunks.append(cleaned_chunk2)
+        
         logging.info(f"extraction and chunking completed")
 
         s3_prefix = f"{user_id}/{job_id}"
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json",
-                      Body=json.dumps(text_chunks).encode("utf-8"),
+        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks_c1.json",
+                      Body=json.dumps(c1_chunks).encode("utf-8"),
                       ContentType="application/json")
-        logging.info(f"appended chunks.json to {s3_prefix}")
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/cleaned_text.txt",
-                      Body=cleaned_text.encode("utf-8"),
+        logging.info(f"appended chunks_c1.json to {s3_prefix}")
+
+        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json",
+                      Body=json.dumps(c2_chunks).encode("utf-8"),
+                      ContentType="application/json")
+        logging.info(f"appended chunks_c2.json AKA chunks.json to {s3_prefix}")
+
+        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/full_text.txt",
+                      Body=full_text.encode("utf-8"),
                       ContentType="text/plain")
-        logging.info(f"appended cleaned_txt to {s3_prefix}")
+        logging.info(f"appended full text to {s3_prefix}")
 
         os.remove(file_path)
-        del full_text, cleaned_text, text_chunks, cleaner, extractor
+        del full_text, cleaned_text, text_chunks, cleaner, extractor,c1_chunks,c2_chunks
         logging.info(f"[TASK] Completed text extraction for {file_path}")
 
         # Trigger next step: process all chunks
@@ -79,6 +94,7 @@ def process_file_task(user_id, job_id, file_path, voice):
         update_job_status(job_id, f"failed: {str(e)}")
         logging.error(f"process_file_task failed for job {job_id}: {e}", exc_info=True)
         raise
+
 @app.post("/upload_file")
 async def upload_file(
     file: UploadFile = File(...),
@@ -160,6 +176,17 @@ async def serve_speech(user_id: str, job_id: str, voice: str, speech_index: str)
     except Exception as e:
         logger.error(f"Error serving audio {s3_prefix}: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving audio file")
+
+# to get chunks_c1.json for subtitle
+@app.get("/stream/chunks/{user_id}/{job_id}")
+async def serve_chunk(user_id:str, job_id:str):
+    s3_prefix = f"{user_id}/{job_id}/chunks_c1.json"
+    try:
+        obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
+        content = obj["Body"].read()
+        return Response(content, media_type="application/json")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error retrieving chunks.json")
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
