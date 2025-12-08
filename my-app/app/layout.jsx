@@ -1,11 +1,14 @@
-import './globals.css';
+import { ClerkProvider } from '@clerk/nextjs'
+import './globals.css'
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body>
-        {children}
-      </body>
-    </html>
-  );
+    <ClerkProvider>
+      <html lang="en">
+        <body>
+          {children}
+        </body>
+      </html>
+    </ClerkProvider>
+  )
 }
