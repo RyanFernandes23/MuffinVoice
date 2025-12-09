@@ -60,8 +60,11 @@ def process_file_task(user_id, job_id, file_path, voice):
         full_text = extractor.extract_file()
         text_chunks = segment_text(full_text)
         for chunk in text_chunks:
-            cleaned_chunk1 = cleaner1(chunk)
+            if isinstance(chunk, list):
+                chunk = " ".join(str(item) for item in chunk)
+            cleaned_chunk1 = cleaner1(chunk,abbrevate=False) # to get original with removed space and citations for client
             c1_chunks.append(cleaned_chunk1)
+            cleaned_chunk1 = cleaner1(chunk,abbrevate=True) # to send abbrevated also for tts
             cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1)
             c2_chunks.append(cleaned_chunk2)
         
@@ -84,7 +87,7 @@ def process_file_task(user_id, job_id, file_path, voice):
         logging.info(f"appended full text to {s3_prefix}")
 
         os.remove(file_path)
-        del full_text, cleaned_text, text_chunks, cleaner, extractor,c1_chunks,c2_chunks
+        del full_text, text_chunks, extractor,c1_chunks,c2_chunks
         logging.info(f"[TASK] Completed text extraction for {file_path}")
 
         # Trigger next step: process all chunks

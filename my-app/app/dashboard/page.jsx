@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Navbar from '../components/Navbar';
 import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
+import { useAuth, useClerk } from '@clerk/nextjs'; // Import Clerk hooks
 
 export default function DashboardPage() {
+  const { isSignedIn } = useAuth(); // Check if user is logged in
+  const { openSignIn } = useClerk(); // Helper to open the sign-in modal
   const [notebooks, setNotebooks] = useState([]);
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [currentPlayingNotebook, setCurrentPlayingNotebook] = useState(null);
@@ -41,6 +43,15 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [notebooks]);
 
+  const handleNewNotebookClick = () => {
+    if (isSignedIn) {
+      setIsUploadModalOpen(true);
+    } else {
+      // If not signed in, open the Clerk sign-in modal
+      openSignIn();
+    }
+  };
+
   const addNotebook = (title, voice, jobId) => {
     const newNotebook = {
       id: Date.now(),
@@ -72,10 +83,9 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-yellow-400">
-      <Navbar />
       <main className="flex-grow p-8 relative">
         <button 
-          onClick={() => setIsUploadModalOpen(true)}
+          onClick={handleNewNotebookClick}
           className="absolute top-8 right-8 bg-black text-yellow-400 px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 transition duration-300"
         >
           + New Notebook

@@ -80,11 +80,14 @@ class TTSTextCleaner:
     def __init__(self, defaults_file: str = "default_abbreviations.json"):
         self.abbrev_manager = AbbreviationManager(defaults_file)
 
-    def __call__(self, text: str):
+    def __call__(self, text: str, abbrevate: bool):
         text = self.abbrev_manager.remove_extra_spaces(text)
         text = self.abbrev_manager.citations_cleaner(text)
         text = self.abbrev_manager.remove_linebreaks(text)
-        return self._expand_abbreviations(text)
+        if abbrevate == True:
+            return self._expand_abbreviations(text)
+        else:
+            return text
 
     def _expand_abbreviations(self, text: str) -> str:
         text, _ = self.abbrev_manager.expand_in_text(text)

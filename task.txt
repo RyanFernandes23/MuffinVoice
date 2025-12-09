@@ -4,3 +4,4 @@
 4. for dynamic like spotify, create .LRC file with this chunks_c1.json.
 5. delete endpoint.
 6. create new voice endpoint.
+
