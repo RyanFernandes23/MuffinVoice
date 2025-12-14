@@ -1,7 +1,12 @@
-1. create user login
-2. create user session
+
+
 3. get chunks_c1.json for subtitles (static)
 4. for dynamic like spotify, create .LRC file with this chunks_c1.json.
 5. delete endpoint.
 6. create new voice endpoint.
+7. need to show all notebooks for that user and show in dashboard
+8. think on adding paywall for endpoints.
 
+i want to fetch the notebooks metadata created by the user who has logged in his dashboard and populate with relevant notebook card. so that when he clicks on that notebook it can be easily played. to achieve this we can do this by creating a new endpoint in fastapi that gets the 
+
+i want show subtitles for the speech being played for a particular notebook. to achieve this i have added an endpoint to get the subtitles, which is called stream/chunks/... endpoint this endpoint also takes authorization bearer in the request. the functionality goes like this. when i click on the notebook card, i want the player to open (which is already in place) along with that i want a subtitle to open with it. it must be scrollable.

@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  db:
+    # Uses Postgres 16 with pre-installed pgvector extension (useful for your AI/Embeddings)
+    image: pgvector/pgvector:pg16
+    container_name: wikivoice_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: wikivoice
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist data even if container is removed
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

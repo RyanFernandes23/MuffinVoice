@@ -1,11 +1,11 @@
 'use client';
-
+import { useAuth } from '@clerk/nextjs';
 import { useState } from 'react';
 
 export default function UploadModal({ isOpen, onClose, onUpload }) {
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-
+  const { getToken } = useAuth();
   if (!isOpen) return null;
 
   const handleFileChange = (e) => {
@@ -25,17 +25,15 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   
 
         try {
-
+          const token = await getToken();
           const response = await fetch('http://localhost:8000/upload_file', {
 
             method: 'POST',
 
             headers: {
-
               'X-User-ID': '123',
-
               'voice': 'af_bella',
-
+              Authorization: `Bearer ${token}`
             },
 
             body: formData,
