@@ -1,10 +1,10 @@
 import logging
 # filepath: c:\Users\Hp\OneDrive\Desktop\WikiVoice\src\api\main.py
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException,Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends, BackgroundTasks
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from uuid import uuid4
-from src.TTS_Workers.tasks import process_speeches,get_s3_client,update_job_status  # Ensure actor name matches
+from src.TTS_Workers.tasks import process_speeches, get_s3_client, update_job_status
 import redis
 from sqlmodel import SQLModel, Field, Session, create_engine, select
 from src.TextExtractor.text_extractor import TextExtractor
@@ -13,7 +13,7 @@ from src.TextCleaner.cleaner import cleaner_stage_2
 from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
 import os
 from src.utils.RedisClient import redis_client
-from fastapi.responses import FileResponse,Response
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 import json
 from contextlib import asynccontextmanager
@@ -22,7 +22,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from src.api.schema import Notebook
 from typing import Optional, List
-
 
 load_dotenv()
 
@@ -45,15 +44,13 @@ def set_job_status(job_id: str, status: str, extra: dict = None):
     logger.info(f"DEBUG: Wrote job:{job_id} to Redis with status {status}") 
 
     # 2. Sync to SQL
-    # We only sync to SQL if the status is a "milestone" to save DB writes
-    # (Or just sync everything if your volume is low)
     update_db_status(job_id, status)
-    
     logger.info(f"Job {job_id} status updated to {status}")
 
 def get_job_status(job_id: str):
     job_status = redis_client.hgetall(f"job:{job_id}")
     return job_status
+
 engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
 
 def create_db_and_tables():
@@ -64,17 +61,13 @@ async def lifespan(app: FastAPI):
     # This runs BEFORE the app starts
     create_db_and_tables()
     yield
-    # This runs AFTER the app stops (optional cleanup)
+    # This runs AFTER the app stops
 
 def get_session():
     with Session(engine) as session:
         yield session
 
 def update_db_status(job_id: str, status: str):
-    """
-    Opens a short-lived session to sync status to SQL.
-    This is safe to call from background threads.
-    """
     try:
         with Session(engine) as session:
             statement = select(Notebook).where(Notebook.job_id == job_id)
@@ -89,12 +82,12 @@ def update_db_status(job_id: str, status: str):
     except Exception as e:
         logger.error(f"Failed to sync DB status: {e}")
 
-app = FastAPI(title="TTS API with Dramatiq",lifespan=lifespan)
+app = FastAPI(title="TTS API with Dramatiq", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -150,31 +143,23 @@ def process_file_task(user_id, job_id, file_path, voice):
         # Trigger Dramatiq worker
         process_speeches.send(user_id, job_id, voice)
         
-        # NOTE: We do NOT mark as 'completed' here yet, because process_speeches
-        # is async. The final completion should be handled by the worker 
-        # that actually finishes the MP3 generation.
-        # However, if this is the end of *this* stage:
         logger.info(f"Queued process_speeches for job {job_id}")
 
     except Exception as e:
-        # Mark as failed in Redis AND DB
         set_job_status(job_id, "failed", {"error": str(e)})
         logging.error(f"process_file_task failed for job {job_id}: {e}", exc_info=True)
-        # Clean up file if it exists
         if os.path.exists(file_path):
             os.remove(file_path)
         raise
 
-
 @app.post("/upload_file")
 async def upload_file(
-    # Add BackgroundTasks to handle the thread properly
     background_tasks: BackgroundTasks, 
     file: UploadFile = File(...),
     user_id: str = Header(..., alias="X-User-ID"),
     voice: str = Header("af_bella", alias="voice"),
     token_payload = Depends(clerk_auth),
-    session: Session = Depends(get_session) # Inject Session
+    session: Session = Depends(get_session)
 ):
     
     user_id = token_payload.decoded.get("sub")
@@ -192,7 +177,6 @@ async def upload_file(
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
 
-    # 1. CREATE DB ENTRY (Initial State)
     new_notebook = Notebook(
         user_id=user_id,
         job_id=job_id,
@@ -204,7 +188,6 @@ async def upload_file(
     session.commit()
     set_job_status(job_id, "queued") 
 
-    # 2. Start Processing (using BackgroundTasks for better FastAPI integration)
     background_tasks.add_task(process_file_task, user_id, job_id, str(temp_path), voice)
     
     logger.info(f"File uploaded for user {user_id}, job_id {job_id}")
@@ -215,7 +198,6 @@ async def upload_file(
         "job_id": job_id
     }
 
-# NEW: Endpoint to populate Dashboard
 @app.get("/notebooks", response_model=List[Notebook])
 async def get_my_notebooks(
     token_payload = Depends(clerk_auth),
@@ -233,17 +215,14 @@ async def delete_notebook(
 ):
     user_id = token_payload.decoded.get("sub")
     
-    # 1. Find the notebook and verify ownership
     statement = select(Notebook).where(Notebook.job_id == job_id, Notebook.user_id == user_id)
     notebook = session.exec(statement).first()
 
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found or you don't have permission to delete it.")
 
-    # 2. Delete all associated files from S3
     s3_prefix = f"{user_id}/{job_id}/"
     try:
-        # List all objects with the given prefix
         response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
         if 'Contents' in response:
             objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
@@ -251,20 +230,15 @@ async def delete_notebook(
             logger.info(f"Deleted all files from S3 for prefix: {s3_prefix}")
     except Exception as e:
         logger.error(f"Error deleting files from S3 for prefix {s3_prefix}: {e}")
-        # Optionally, you can decide not to proceed with DB deletion if S3 fails
         raise HTTPException(status_code=500, detail="Failed to delete associated files from storage.")
 
-    # 3. Delete from PostgreSQL
     session.delete(notebook)
     session.commit()
     logger.info(f"Deleted notebook {job_id} from database.")
-
-    # 4. (Optional) Delete from Redis
     redis_client.delete(f"job:{job_id}")
     logger.info(f"Deleted job {job_id} from Redis.")
 
     return Response(status_code=204)
-
 
 @app.get("/job_status/{job_id}")
 async def job_status(job_id: str, _ = Depends(clerk_auth)):
@@ -283,7 +257,6 @@ async def serve_manifest(user_id: str, job_id: str, voice: str, token_payload = 
     
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}/manifest.m3u8"
     
-    # Download manifest temporarily
     try:
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
@@ -303,13 +276,11 @@ async def serve_speech(user_id: str, job_id: str, voice: str, speech_index: str,
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}/{speech_index}"
     
     try:
-        # Get the MP3 file from S3 (fixed: Key not key)
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
         
         logger.info(f"Served {speech_index} for user {user_id}, job {job_id}, voice {voice}")
         
-        # Return audio with proper MIME type
         return Response(
             content=content,
             media_type="audio/mpeg",
@@ -327,7 +298,29 @@ async def serve_speech(user_id: str, job_id: str, voice: str, speech_index: str,
         logger.error(f"Error serving audio {s3_prefix}: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving audio file")
 
-# to get chunks_c1.json for subtitle
+# --- NEW ENDPOINT: SERVE SUBTITLES (Replaces chunks logic usually) ---
+@app.get("/stream/subtitles/{user_id}/{job_id}")
+async def serve_subtitles(user_id: str, job_id: str, token_payload = Depends(clerk_auth)):
+    
+    if token_payload.decoded.get("sub") != user_id:
+        logger.warning(f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}")
+        raise HTTPException(status_code=403, detail="You do not have permission to view this file.")
+    
+    s3_prefix = f"{user_id}/{job_id}/subtitles.json"
+    
+    try:
+        obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
+        content = obj["Body"].read()
+        return Response(content, media_type="application/json")
+    except s3.exceptions.NoSuchKey:
+        # It's possible the job is still processing or finished without creating subtitles (if failed)
+        logger.warning(f"Subtitles not found for {job_id} (might be processing)")
+        raise HTTPException(status_code=404, detail="Subtitles not found or not ready")
+    except Exception as e:
+        logger.error(f"Error retrieving subtitles for {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving subtitles")
+
+# (Optional: Keep this if you need raw chunks for some other reason)
 @app.get("/stream/chunks/{user_id}/{job_id}")
 async def serve_chunk(user_id:str, job_id:str, token_payload = Depends(clerk_auth)):
 
@@ -342,6 +335,3 @@ async def serve_chunk(user_id:str, job_id:str, token_payload = Depends(clerk_aut
         return Response(content, media_type="application/json")
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error retrieving chunks.json")
-
-
-# app.mount("/", StaticFiles(directory="static", html=True), name="static")

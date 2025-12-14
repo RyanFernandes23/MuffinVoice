@@ -5,7 +5,7 @@ import Hls from 'hls.js';
 import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaVolumeUp, FaVolumeDown, FaVolumeOff, FaVolumeMute, FaTimes } from 'react-icons/fa';
 
 // 1. Accepts 'getToken' function as a prop
-export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle }) {
+export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp  }) {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -50,6 +50,10 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
 
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
+      // Notify parent of time change
+      if (onTimeUpdateProp) {
+        onTimeUpdateProp(audio.currentTime);
+      }
     };
 
     const onLoadedMetadata = () => {

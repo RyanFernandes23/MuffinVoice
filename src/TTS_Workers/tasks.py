@@ -25,10 +25,9 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
 
-# --- NEW: DB Update Function ---
+# --- DB Update Function ---
 def update_db_status(job_id: str, status: str):
     """
     Syncs the final status to the SQL database.
@@ -47,7 +46,7 @@ def update_db_status(job_id: str, status: str):
     except Exception as e:
         logging.error(f"[DB-SYNC] Failed to update DB: {e}")
 
-# --- Existing Redis Update ---
+# --- Redis Update ---
 def update_job_status(job_id, status):
     # 1. Update Redis (Hot Data)
     redis_client.hset(f"job:{job_id}", mapping={"status": status})
@@ -57,7 +56,7 @@ def update_job_status(job_id, status):
     if status in ["completed", "failed"]:
         update_db_status(job_id, status)
 
-# ... (Rest of your middleware setup remains the same) ...
+# --- Middleware Setup ---
 result_backend = RedisBackend(client=redis_client)
 rate_limiter_backend = RateLimitRedisBackend(client=redis_client)
 redis_broker.add_middleware(Results(backend=result_backend))
@@ -67,10 +66,10 @@ dramatiq.set_broker(redis_broker)
 def get_s3_client():
     s3 = boto3.client(
         "s3",
-        endpoint_url="http://localhost:9000",
-        aws_access_key_id="admin",
-        aws_secret_access_key="change-me-please",
-        region_name="us-east-1",
+        endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("S3_REGION_NAME"),
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"})
     )
     return s3
@@ -81,7 +80,6 @@ def chunks_in_batches(lst, n):
 
 @dramatiq.actor
 def process_speeches(user_id, job_id, voice):
-    # ... (No changes needed here, relies on finalize_manifest) ...
     batch_size = 50
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}"
@@ -91,7 +89,7 @@ def process_speeches(user_id, job_id, voice):
         response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
         chunks = json.loads(response["Body"].read().decode("utf-8"))
 
-        # Initialize empty manifest file
+        # Initialize empty metadata file (we use this to store duration/index for both manifest and subtitles)
         voice_prefix = f"{s3_prefix}/voices/{voice}"
         s3.put_object(
             Bucket="ttsfiles",
@@ -126,20 +124,17 @@ def process_speeches(user_id, job_id, voice):
         logging.info(f"[TASK] Queued finalize_manifest callback for {voice} (job {job_id})")
         
     except Exception as e:
-        # NEW: Mark as failed in DB if this step crashes
         update_job_status(job_id, "failed")
         logging.error(f"process_speeches failed for job {job_id}: {e}", exc_info=True)
         raise
 
 @dramatiq.actor(store_results=True)
 def process_single_speech(index, text, voice, user_id, job_id):
-    # ... (Keep existing implementation) ...
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
     bucket = "ttsfiles"
 
     try:
-        # ... logic ...
         if isinstance(text, list):
             text = " ".join(map(str, text))
         elif not isinstance(text, str):
@@ -151,14 +146,16 @@ def process_single_speech(index, text, voice, user_id, job_id):
                 if data:
                     audio_data += data
 
+        # Calculate duration directly from BytesIO
         duration = MP3(BytesIO(audio_data)).info.length
 
         mp3_key = f"{s3_prefix}/speech{index}.mp3"
         s3.put_object(Bucket=bucket, Key=mp3_key, Body=audio_data, ContentType="audio/mpeg")
         
-        meta_key = f"{s3_prefix}/manifest_data.json"
+        # We store minimal metadata needed for both M3U8 and Subtitles
         metadata_entry = {"index": index, "filename": f"speech{index}.mp3", "duration": duration}
 
+        meta_key = f"{s3_prefix}/manifest_data.json"
         lock_key = f"lock:manifest:{job_id}:{voice}"
         lock = redis_client.lock(lock_key, timeout=30, blocking_timeout=60)
         
@@ -177,6 +174,8 @@ def process_single_speech(index, text, voice, user_id, job_id):
                 ContentType="application/json"
             )
 
+        return metadata_entry # Not strictly used by pipeline callback, but good for debugging results
+
     except Exception as e:
         logging.error(f"[ERROR] process_single_speech index={index}: {e}", exc_info=True)
         raise
@@ -184,52 +183,83 @@ def process_single_speech(index, text, voice, user_id, job_id):
 @dramatiq.actor
 def finalize_manifest(user_id, job_id, voice):
     s3 = get_s3_client()
-    s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
+    s3_prefix = f"{user_id}/{job_id}"
+    voice_prefix = f"{s3_prefix}/voices/{voice}"
     bucket = "ttsfiles"
 
     try:
-        logging.info(f"Starting finalize_manifest for job {job_id}")
-        resp = s3.get_object(Bucket=bucket, Key=f"{s3_prefix}/manifest_data.json")
-        data = json.loads(resp["Body"].read().decode("utf-8"))
+        logging.info(f"--- STARTING FINALIZE for {job_id} ---")
+        
+        # 1. CHECK MANIFEST DATA
+        manifest_data_key = f"{voice_prefix}/manifest_data.json"
+        try:
+            resp = s3.get_object(Bucket=bucket, Key=manifest_data_key)
+            audio_meta = json.loads(resp["Body"].read().decode("utf-8"))
+            audio_meta.sort(key=lambda x: x["index"])
+        except s3.exceptions.NoSuchKey:
+            logging.error(f"CRITICAL: {manifest_data_key} not found. Did workers finish?")
+            update_job_status(job_id, "failed")
+            return # Stop here
 
-        data.sort(key=lambda x: x["index"])
+        # 2. LOAD CHUNKS (Your structure confirms this file exists)
+        try:
+            resp_text = s3.get_object(Bucket=bucket, Key=f"{s3_prefix}/chunks_c1.json")
+            display_texts = json.loads(resp_text["Body"].read().decode("utf-8"))
+        except Exception as e:
+            logging.error(f"Failed to load text chunks: {e}")
+            display_texts = []
 
-        manifest_lines = [
-            "#EXTM3U",
-            "#EXT-X-VERSION:3",
-            "#EXT-X-TARGETDURATION:15",
-            "#EXT-X-MEDIA-SEQUENCE:0"
-        ]
+        # 3. CONSTRUCT SUBTITLES
+        subtitle_data = {"version": "1.0", "job_id": job_id, "segments": []}
+        current_time = 0.0
+        
+        # Build manifest lines concurrently
+        manifest_lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:15", "#EXT-X-MEDIA-SEQUENCE:0"]
 
-        for item in data:
+        for item in audio_meta:
             manifest_lines.append(f"#EXTINF:{item['duration']:.2f},")
             manifest_lines.append(item["filename"])
+            
+            idx = item["index"]
+            # Safe access to text
+            text = display_texts[idx] if idx < len(display_texts) else "[Text Missing]"
+            
+            subtitle_data["segments"].append({
+                "start": current_time,
+                "end": current_time + item['duration'],
+                "text": text,
+                "index": idx
+            })
+            current_time += item['duration']
 
         manifest_lines.append("#EXT-X-ENDLIST")
-        manifest_content = "\n".join(manifest_lines)
 
+        # 4. UPLOAD SUBTITLES (The missing piece)
+        sub_key = f"{s3_prefix}/subtitles.json"
+        logging.info(f"Uploading subtitles to {sub_key}")
         s3.put_object(
-            Bucket=bucket,
-            Key=f"{s3_prefix}/manifest.m3u8",
-            Body=manifest_content.encode("utf-8"),
-            ContentType="application/vnd.apple.mpegurl"
+            Bucket=bucket, 
+            Key=sub_key, 
+            Body=json.dumps(subtitle_data).encode("utf-8"), 
+            ContentType="application/json"
         )
 
-        logging.info(f"[HLS] Manifest finalized and uploaded for {voice}")
+        # 5. UPLOAD MANIFEST
+        s3.put_object(
+            Bucket=bucket,
+            Key=f"{voice_prefix}/manifest.m3u8",
+            Body="\n".join(manifest_lines).encode("utf-8"),
+            ContentType="application/vnd.apple.mpegurl"
+        )
         
-        # --- KEY CHANGE: This now updates Redis AND SQL ---
+        logging.info(f"--- SUCCESS: Subtitles and Manifest uploaded for {job_id} ---")
         update_job_status(job_id, "completed")
-        # --------------------------------------------------
 
-        try:
-            head = s3.head_object(Bucket=bucket, Key=f"{s3_prefix}/manifest.m3u8")
-            if head:
-                s3.delete_object(Bucket=bucket, Key=f"{s3_prefix}/manifest_data.json")
-                logging.info(f"[CLEANUP] Deleted temporary manifest_data.json for {voice}")
-        except Exception as e:
-            logging.warning(f"[WARN] Failed to delete manifest_data.json: {e}")
+        # Cleanup
+        s3.delete_object(Bucket=bucket, Key=manifest_data_key)
 
     except Exception as e:
-        logging.error(f"[ERROR] finalize_manifest: {e}", exc_info=True)
-        # Ensure failures are recorded in DB
+        logging.error(f"Finalize crashed: {e}", exc_info=True)
         update_job_status(job_id, "failed")
+
+

@@ -15,8 +15,10 @@ export default function DashboardPage() {
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [currentPlayingNotebook, setCurrentPlayingNotebook] = useState(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [subtitle, setSubtitle] = useState("");
+  const [subtitleData, setSubtitleData] = useState([]); 
   const [isSubtitleOpen, setIsSubtitleOpen] = useState(false);
+  const [playerTime, setPlayerTime] = useState(0);
+
 
   const fetchNotebooks = useCallback(async () => {
     if (!isSignedIn) return;
@@ -136,16 +138,22 @@ export default function DashboardPage() {
     if (notebook.status === 'completed') {
       try {
         const token = await getToken();
-        const response = await fetch(`http://localhost:8000/stream/chunks/${notebook.user_id}/${notebook.job_id}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+        // CHANGE: Fetch the JSON subtitles instead of raw chunks
+        const response = await fetch(`http://localhost:8000/stream/subtitles/${notebook.user_id}/${notebook.job_id}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
         });
+
         if (!response.ok) {
-          throw new Error('Failed to fetch notebook content');
+           // Fallback if subtitles aren't ready? 
+           // Or just throw error
+           console.warn("Subtitles not found, maybe old job?");
+           setSubtitleData([]);
+        } else {
+           const data = await response.json();
+           // Expecting: { segments: [{start, end, text}, ...] }
+           setSubtitleData(data.segments || []);
         }
-        const data = await response.json();
-        setSubtitle(data.join('\n'));
+
         setIsSubtitleOpen(true);
         setCurrentPlayingNotebook(notebook);
         setShowAudioPlayer(true);
@@ -154,7 +162,6 @@ export default function DashboardPage() {
       }
     }
   };
-
   const closeAudioPlayer = useCallback(() => {
     setShowAudioPlayer(false);
     setCurrentPlayingNotebook(null);
@@ -198,13 +205,15 @@ export default function DashboardPage() {
           getToken={getToken}
           onClose={closeAudioPlayer}
           onToggleSubtitle={toggleSubtitleWindow}
+          onTimeUpdate={(time) => setPlayerTime(time)}
         />
       )}
 
       {isSubtitleOpen && (
         <SubtitleWindow 
-          content={subtitle}
-          onClose={closeSubtitleWindow}
+           subtitles={subtitleData} 
+           currentTime={playerTime}
+           onClose={closeSubtitleWindow}
         />
       )}
 
