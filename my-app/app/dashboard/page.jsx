@@ -18,6 +18,8 @@ export default function DashboardPage() {
   const [subtitleData, setSubtitleData] = useState([]); 
   const [isSubtitleOpen, setIsSubtitleOpen] = useState(false);
   const [playerTime, setPlayerTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [seekTime, setSeekTime] = useState(null);
 
 
   const fetchNotebooks = useCallback(async () => {
@@ -94,6 +96,18 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval);
   }, [notebooks, getToken, userId]);
+
+  useEffect(() => {
+    if (isSubtitleOpen) {
+      document.body.classList.add('body-no-scroll');
+    } else {
+      document.body.classList.remove('body-no-scroll');
+    }
+    // Cleanup function to ensure the class is removed when the component unmounts
+    return () => {
+      document.body.classList.remove('body-no-scroll');
+    };
+  }, [isSubtitleOpen]);
 
 
   const handleNewNotebookClick = () => {
@@ -198,6 +212,16 @@ export default function DashboardPage() {
         </div>
       </main>
 
+      {isSubtitleOpen && (
+        <SubtitleWindow 
+           subtitles={subtitleData} 
+           currentTime={playerTime}
+           onClose={closeSubtitleWindow}
+           duration={duration}
+           onSeek={setSeekTime}
+        />
+      )}
+
       {showAudioPlayer && currentPlayingNotebook && (
         <AudioPlayer 
           title={currentPlayingNotebook.title}
@@ -206,14 +230,8 @@ export default function DashboardPage() {
           onClose={closeAudioPlayer}
           onToggleSubtitle={toggleSubtitleWindow}
           onTimeUpdate={(time) => setPlayerTime(time)}
-        />
-      )}
-
-      {isSubtitleOpen && (
-        <SubtitleWindow 
-           subtitles={subtitleData} 
-           currentTime={playerTime}
-           onClose={closeSubtitleWindow}
+          onDurationChange={setDuration}
+          seekTime={seekTime}
         />
       )}
 

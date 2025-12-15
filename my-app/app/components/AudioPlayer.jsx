@@ -5,7 +5,7 @@ import Hls from 'hls.js';
 import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaVolumeUp, FaVolumeDown, FaVolumeOff, FaVolumeMute, FaTimes } from 'react-icons/fa';
 
 // 1. Accepts 'getToken' function as a prop
-export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp  }) {
+export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp, onDurationChange, seekTime  }) {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -15,12 +15,19 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isTokenReady, setIsTokenReady] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
   
   const audioRef = useRef(null);
   const hlsRef = useRef(null);
   
   // 2. Ref to hold the current fresh token
   const tokenRef = useRef(null);
+
+  useEffect(() => {
+    if (seekTime !== null && audioRef.current && !isSeeking) { // Only update if not actively seeking
+      audioRef.current.currentTime = seekTime;
+    }
+  }, [seekTime, isSeeking]);
 
   // 3. Effect to keep token fresh in background
   useEffect(() => {
@@ -50,14 +57,17 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
 
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
-      // Notify parent of time change
-      if (onTimeUpdateProp) {
+      // Notify parent of time change ONLY if not currently seeking
+      if (onTimeUpdateProp && !isSeeking) {
         onTimeUpdateProp(audio.currentTime);
       }
     };
 
     const onLoadedMetadata = () => {
       setDuration(audio.duration);
+      if (onDurationChange) {
+        onDurationChange(audio.duration);
+      }
     };
 
     const onProgress = () => {
@@ -68,18 +78,33 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
       }
     };
 
+    // Handle seeking events
+    const onSeeking = () => {
+      if (!isSeeking) { // Only set if not already set by handleSeek
+        setIsSeeking(true);
+      }
+    };
+
+    const onSeeked = () => {
+      setIsSeeking(false); // End seeking
+    };
+
     if (audio) {
       audio.addEventListener('timeupdate', onTimeUpdate);
       audio.addEventListener('loadedmetadata', onLoadedMetadata);
       audio.addEventListener('progress', onProgress);
+      audio.addEventListener('seeking', onSeeking); // Add new listener
+      audio.addEventListener('seeked', onSeeked);   // Add new listener
 
       return () => {
         audio.removeEventListener('timeupdate', onTimeUpdate);
         audio.removeEventListener('loadedmetadata', onLoadedMetadata);
         audio.removeEventListener('progress', onProgress);
+        audio.removeEventListener('seeking', onSeeking); // Remove new listener
+        audio.removeEventListener('seeked', onSeeked);   // Remove new listener
       };
     }
-  }, []);
+  }, [onDurationChange, onTimeUpdateProp]);
 
 
   // Initialize HLS with Authentication
@@ -145,8 +170,11 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
 
   const handleSeek = (e) => {
     if (audioRef.current) {
-      audioRef.current.currentTime = e.target.value;
-      setCurrentTime(e.target.value);
+      setIsSeeking(true); // Start seeking
+      const newTime = parseFloat(e.target.value);
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+      // Do NOT call onTimeUpdateProp here; it will be handled by onSeeked or onTimeUpdate
     }
   };
 
@@ -191,7 +219,7 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-black bg-opacity-90 text-white p-2 shadow-lg z-50 mb-4 flex flex-col h-32">
+    <div className="fixed bottom-2 left-0 right-0 bg-black bg-opacity-90 text-white p-2 shadow-lg z-50 flex flex-col h-40">
         <button onClick={onClose} className="absolute top-2 right-2 text-gray-400 hover:text-white">
         <FaTimes className="h-5 w-5" />
       </button>
@@ -228,6 +256,7 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
             max={duration || 0}
             onChange={handleSeek}
             style={{
+              cursor: 'pointer', // Add this line
               background: `linear-gradient(to right, #FACC15 0%, #FACC15 ${((currentTime / (duration || 1)) * 100)}%, #4B5563 ${buffered}%, #6B7280 ${buffered}%, #6B7280 100%)`,
             }}
           />
@@ -266,9 +295,9 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
           {/* Subtitle Button */}
           <button
             onClick={onToggleSubtitle}
-            className="text-xs px-3 py-1 rounded-full bg-yellow-400 text-black font-semibold hover:bg-yellow-500 transition-colors duration-200"
+            className="text-lg px-4 py-2 rounded-full bg-yellow-400 text-black font-bold hover:bg-yellow-500 transition-colors duration-200"
           >
-            Subtitle
+            Subtitles
           </button>
 
         </div>

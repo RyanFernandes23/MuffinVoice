@@ -16,6 +16,7 @@ from src.utils.RedisClient import redis_client
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 import json
+import re
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,12 +26,48 @@ from typing import Optional, List
 
 load_dotenv()
 
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 clerk_config = ClerkConfig(jwks_url=os.getenv("CLERK_JWKS_URL"))
 clerk_auth = ClerkHTTPBearer(config=clerk_config)
+
+def sanitize_display_filename(filename: str) -> str:
+    """
+    Sanitizes a filename for display and database storage, removing potentially harmful characters.
+    Keeps alphanumeric, spaces, periods, hyphens, and underscores.
+    """
+    # Using a regex to allow a broader set of "safe" characters while removing potentially malicious ones.
+    # This regex keeps letters, numbers, spaces, periods, hyphens, and underscores.
+    # It also removes leading/trailing spaces and multiple consecutive spaces.
+    sanitized = re.sub(r'[^\w\s\.\-]', '', filename)
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    return sanitized
+
+def get_unique_notebook_title(user_id: str, desired_title: str, session: Session) -> str:
+    """
+    Generates a unique notebook title for a user, appending (N) if necessary.
+    """
+    base_name, ext = os.path.splitext(desired_title)
+    counter = 1
+    unique_title = desired_title
+
+    while True:
+        statement = select(Notebook).where(
+            Notebook.user_id == user_id,
+            Notebook.title == unique_title
+        )
+        existing_notebook = session.exec(statement).first()
+
+        if not existing_notebook:
+            return unique_title
+        
+        counter += 1
+        unique_title = f"{base_name} ({counter}){ext}"
+
 
 def set_job_status(job_id: str, status: str, extra: dict = None):
     """
@@ -169,18 +206,31 @@ async def upload_file(
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
 
-    safe_filename = secure_filename(file.filename)
-    temp_path = upload_dir / f"{uuid4().hex}-{safe_filename}"
+    # Sanitize the original filename for display and database storage
+    original_filename = file.filename
+    sanitized_display_title = sanitize_display_filename(original_filename)
+    
+    # Get a unique title for the notebook entry in the database
+    unique_db_title = get_unique_notebook_title(user_id, sanitized_display_title, session)
+
+    # Secure filename for saving to disk (prevents path traversal)
+    safe_disk_filename = secure_filename(original_filename)
+    temp_path = upload_dir / f"{uuid4().hex}-{safe_disk_filename}"
     job_id = str(uuid4())
 
+    total_size = 0
     with open(temp_path, "wb") as f:
         while chunk := await file.read(1024 * 1024):
+            total_size += len(chunk)
+            if total_size > MAX_FILE_SIZE:
+                os.remove(temp_path)  # Clean up the partially written file
+                raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_FILE_SIZE // 1024 // 1024}MB.")
             f.write(chunk)
 
     new_notebook = Notebook(
         user_id=user_id,
         job_id=job_id,
-        title=file.filename,
+        title=unique_db_title,  # Use the unique, sanitized title
         voice=voice,
         status="queued"
     )

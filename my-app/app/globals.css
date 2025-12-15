@@ -25,6 +25,11 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Class to prevent body from scrolling */
+.body-no-scroll {
+  overflow: hidden;
+}
+
 /* Seekbar styling */
 .seekbar {
   -webkit-appearance: none;
