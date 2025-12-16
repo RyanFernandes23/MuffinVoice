@@ -3,10 +3,40 @@
 import { useState, useEffect, useRef } from 'react';
 import { FaTimes } from 'react-icons/fa';
 
-export default function NotebookCard({ title, voice, status, onDelete, onOpen }) {
+export default function NotebookCard({ title, voice, status, onDelete, onOpen, userId, jobId, getToken, notesCount: initialNotesCount = 0 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState(initialNotesCount);
   const menuRef = useRef(null);
+
+  // Update notes count when prop changes
+  useEffect(() => {
+    setNotesCount(initialNotesCount);
+  }, [initialNotesCount]);
+
+  // Fetch notes count on initial mount if not provided
+  useEffect(() => {
+    if (initialNotesCount !== 0 || !userId || !jobId || !getToken) return;
+
+    const fetchNotesCount = async () => {
+      try {
+        const token = await getToken();
+        const response = await fetch(`http://localhost:8000/notes_count/${userId}/${jobId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setNotesCount(data.count);
+        }
+      } catch (error) {
+        console.error('Error fetching notes count:', error);
+      }
+    };
+
+    fetchNotesCount();
+  }, [userId, jobId, getToken, initialNotesCount]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -53,12 +83,17 @@ export default function NotebookCard({ title, voice, status, onDelete, onOpen })
         <div>
           <h2 className="text-xl font-semibold text-yellow-400 mb-2">{displayTitle}</h2>
           <p className="text-yellow-400 mb-1">Voice: {voice}</p>
-          <p className="text-yellow-400">Status: {status} {status === 'processing' && (
+          <p className="text-yellow-400 mb-2">Status: {status} {status === 'processing' && (
             <svg className="animate-spin h-4 w-4 text-yellow-400 inline-block ml-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
           )}</p>
+          {/* Notes Badge */}
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-700 text-green-100 text-xs rounded-full">
+            <span>📋</span>
+            <span>{notesCount} note{notesCount !== 1 ? 's' : ''}</span>
+          </div>
         </div>
         <div className="relative">
           <button onClick={handleMenuToggle} className="text-yellow-400 hover:text-white">

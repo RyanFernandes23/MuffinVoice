@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaVolumeUp, FaVolumeDown, FaVolumeOff, FaVolumeMute, FaTimes } from 'react-icons/fa';
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaVolumeUp, FaVolumeDown, FaVolumeOff, FaVolumeMute, FaTimes, FaStickyNote } from 'react-icons/fa';
+import NotesModal from './NotesModal';
+import NotesList from './NotesList';
 
 // 1. Accepts 'getToken' function as a prop
-export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp, onDurationChange, seekTime, userId, jobId  }) {
+export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp, onDurationChange, seekTime, userId, jobId, currentSubtitle = '', onNotesUpdate, isSubtitleOpen = false, onCloseSubtitle }) {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -26,8 +28,17 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
   const [modalType, setModalType] = useState('info'); // 'info', 'success', 'error'
   const [currentManifestUrl, setCurrentManifestUrl] = useState(manifestUrl);
   
+  // Notes state
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [showNotesSidebar, setShowNotesSidebar] = useState(false);
+  const [notes, setNotes] = useState([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  
   const audioRef = useRef(null);
   const hlsRef = useRef(null);
+  const voiceOptionsRef = useRef(null);
   
   // 2. Ref to hold the current fresh token
   const tokenRef = useRef(null);
@@ -44,6 +55,20 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
         return 'text-gray-400';
     }
   };
+
+  // Close voice options when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (voiceOptionsRef.current && !voiceOptionsRef.current.contains(event.target)) {
+        setShowVoiceOptions(false);
+      }
+    };
+
+    if (showVoiceOptions) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showVoiceOptions]);
 
   // Fetch voice status from backend - only when options pane is open
   useEffect(() => {
@@ -193,6 +218,122 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
     }
   }, [onDurationChange, onTimeUpdateProp]);
 
+  // Fetch notes when sidebar opens
+  useEffect(() => {
+    if (!showNotesSidebar || !userId || !jobId || !getToken) return;
+
+    const fetchNotes = async () => {
+      setLoadingNotes(true);
+      try {
+        const token = await getToken();
+        const response = await fetch(`http://localhost:8000/notes/${userId}/${jobId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setNotes(data.notes);
+        }
+      } catch (error) {
+        console.error('Error fetching notes:', error);
+      } finally {
+        setLoadingNotes(false);
+      }
+    };
+
+    fetchNotes();
+  }, [userId, jobId, getToken, showNotesSidebar]);
+
+  // Handle saving a note
+  const handleSaveNote = async (noteText) => {
+    if (!userId || !jobId || !getToken) return;
+    
+    setIsSavingNote(true);
+    try {
+      const token = await getToken();
+      const method = editingNote ? 'PUT' : 'POST';
+      const url = editingNote 
+        ? `http://localhost:8000/notes/${userId}/${jobId}/${editingNote.id}`
+        : `http://localhost:8000/notes/${userId}/${jobId}?timestamp=${currentTime}&user_note=${encodeURIComponent(noteText)}&subtitle_text=${encodeURIComponent(currentSubtitle)}`;
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: editingNote ? JSON.stringify({ user_note: noteText }) : undefined,
+      });
+
+      if (response.ok) {
+        const newNote = await response.json();
+        
+        let updatedNotes;
+        if (editingNote) {
+          // Update existing note in list
+          updatedNotes = notes.map(n => n.id === editingNote.id ? newNote : n);
+          setNotes(updatedNotes);
+        } else {
+          // Add new note to list
+          updatedNotes = [...notes, newNote];
+          setNotes(updatedNotes);
+        }
+
+        // Notify parent about notes update
+        if (onNotesUpdate) {
+          onNotesUpdate(updatedNotes.length);
+        }
+
+        setShowNotesModal(false);
+        setEditingNote(null);
+      }
+    } catch (error) {
+      console.error('Error saving note:', error);
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  // Handle deleting a note
+  const handleDeleteNote = async (noteId) => {
+    if (!userId || !jobId || !getToken) return;
+
+    try {
+      const token = await getToken();
+      const response = await fetch(`http://localhost:8000/notes/${userId}/${jobId}/${noteId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const updatedNotes = notes.filter(n => n.id !== noteId);
+        setNotes(updatedNotes);
+        
+        // Notify parent about notes update
+        if (onNotesUpdate) {
+          onNotesUpdate(updatedNotes.length);
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting note:', error);
+    }
+  };
+
+  // Handle editing a note
+  const handleEditNote = (note) => {
+    setEditingNote(note);
+    setShowNotesModal(true);
+  };
+
+  // Handle note click - seek to that time
+  const handleNoteClick = (timestamp) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = timestamp;
+    }
+  };
 
   // Initialize HLS with Authentication
   useEffect(() => {
@@ -312,10 +453,12 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
           setModalType('success');
           setModalMessage('✓ Processing started for this voice. Please wait while it\'s being processed!');
           setShowModal(true);
-          // Refresh voice statuses to update the UI
-          setTimeout(() => {
-            window.location.reload();
-          }, 500);
+          // Update the voice status locally instead of reloading the page
+          setVoices(prevVoices => 
+            prevVoices.map(voice => 
+              voice.id === voiceId ? { ...voice, status: 'processing' } : voice
+            )
+          );
         } else {
           const error = await response.json();
           console.error(`Error processing voice: ${error.detail}`);
@@ -389,9 +532,22 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
     }
   };
 
+  const handleClosePlayer = () => {
+    // Close subtitle only if it's currently open (don't toggle)
+    if (isSubtitleOpen && onCloseSubtitle) {
+      onCloseSubtitle();
+    }
+    // Close notes modal and sidebar
+    setShowNotesModal(false);
+    setShowNotesSidebar(false);
+    setEditingNote(null);
+    // Close the player
+    onClose();
+  };
+
   return (
     <div className="fixed bottom-2 left-0 right-0 bg-black bg-opacity-90 text-white p-2 shadow-lg z-50 flex flex-col h-40">
-        <button onClick={onClose} className="absolute top-2 right-2 text-gray-400 hover:text-white">
+        <button onClick={handleClosePlayer} className="absolute top-2 right-2 text-gray-400 hover:text-white">
         <FaTimes className="h-5 w-5" />
       </button>
 
@@ -471,8 +627,29 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
             Subtitles
           </button>
 
+          {/* Notes Button */}
+          <button
+            onClick={() => setShowNotesModal(true)}
+            className="text-lg px-4 py-2 rounded-full bg-green-400 text-black font-bold hover:bg-green-500 transition-colors duration-200 flex items-center gap-2"
+          >
+            <FaStickyNote className="h-4 w-4" />
+            Notes
+          </button>
+
+          {/* Toggle Notes Sidebar */}
+          <button
+            onClick={() => setShowNotesSidebar(!showNotesSidebar)}
+            className={`text-lg px-4 py-2 rounded-full font-bold transition-colors duration-200 flex items-center gap-2 ${
+              showNotesSidebar 
+                ? 'bg-green-500 text-black hover:bg-green-600' 
+                : 'bg-gray-700 text-white hover:bg-gray-600'
+            }`}
+          >
+            📋 {notes.length}
+          </button>
+
           {/* Switch Voice Button */}
-          <div className="relative">
+          <div className="relative" ref={voiceOptionsRef}>
             <button
               onClick={() => setShowVoiceOptions(!showVoiceOptions)}
               className="text-lg px-4 py-2 rounded-full bg-yellow-400 text-black font-bold hover:bg-yellow-500 transition-colors duration-200"
@@ -514,6 +691,45 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
 
         </div>
       </div>
+
+      {/* Notes Modal */}
+      <NotesModal
+        isOpen={showNotesModal}
+        onClose={() => {
+          setShowNotesModal(false);
+          setEditingNote(null);
+        }}
+        currentTime={currentTime}
+        subtitle={currentSubtitle}
+        onSaveNote={handleSaveNote}
+        editingNote={editingNote}
+        isSaving={isSavingNote}
+      />
+
+      {/* Notes Sidebar */}
+      {showNotesSidebar && (
+        <div className="fixed bottom-2 right-96 w-80 h-96 bg-gray-900 border border-green-400 rounded-lg shadow-xl p-4 z-40 flex flex-col">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-white font-semibold">My Notes</h3>
+            <button
+              onClick={() => setShowNotesSidebar(false)}
+              className="text-gray-400 hover:text-white"
+            >
+              <FaTimes className="h-5 w-5" />
+            </button>
+          </div>
+          <NotesList
+            notes={notes}
+            onNoteClick={handleNoteClick}
+            onDeleteNote={handleDeleteNote}
+            onEditNote={handleEditNote}
+            isLoading={loadingNotes}
+            userId={userId}
+            jobId={jobId}
+            getToken={getToken}
+          />
+        </div>
+      )}
 
       {/* Voice Status Modal */}
       {showModal && (

@@ -37,7 +37,8 @@ export default function DashboardPage() {
       const data = await response.json();
       const formattedNotebooks = data.map(notebook => ({
         ...notebook,
-        manifestUrl: `http://localhost:8000/stream/${notebook.user_id}/${notebook.job_id}/${notebook.voice}/manifest.m3u8`
+        manifestUrl: `http://localhost:8000/stream/${notebook.user_id}/${notebook.job_id}/${notebook.voice}/manifest.m3u8`,
+        notesCount: 0 // Initialize with 0, will be updated
       }));
       setNotebooks(formattedNotebooks);
     } catch (error) {
@@ -176,6 +177,18 @@ export default function DashboardPage() {
       }
     }
   };
+
+  // Get current subtitle based on player time
+  const getCurrentSubtitle = () => {
+    if (!subtitleData || subtitleData.length === 0) return '';
+    
+    const current = subtitleData.find(
+      segment => playerTime >= segment.start && playerTime < segment.end
+    );
+    
+    return current ? current.text : '';
+  };
+
   const closeAudioPlayer = useCallback(() => {
     setShowAudioPlayer(false);
     setCurrentPlayingNotebook(null);
@@ -188,6 +201,17 @@ export default function DashboardPage() {
   const toggleSubtitleWindow = () => {
     setIsSubtitleOpen(!isSubtitleOpen);
   };
+
+  // Callback to update notes count in notebook when notes are created/updated/deleted
+  const handleNotesUpdate = useCallback((newNotesCount) => {
+    setNotebooks(prevNotebooks =>
+      prevNotebooks.map(nb =>
+        nb.job_id === currentPlayingNotebook?.job_id
+          ? { ...nb, notesCount: newNotesCount }
+          : nb
+      )
+    );
+  }, [currentPlayingNotebook]);
 
   return (
     <div className="min-h-screen flex flex-col bg-yellow-400">
@@ -207,6 +231,10 @@ export default function DashboardPage() {
               status={notebook.status}
               onDelete={() => deleteNotebook(notebook.job_id)}
               onOpen={() => playNotebook(notebook)}
+              userId={userId}
+              jobId={notebook.job_id}
+              getToken={getToken}
+              notesCount={notebook.notesCount}
             />
           ))}
         </div>
@@ -234,6 +262,10 @@ export default function DashboardPage() {
           seekTime={seekTime}
           userId={userId}
           jobId={currentPlayingNotebook.job_id}
+          currentSubtitle={getCurrentSubtitle()}
+          onNotesUpdate={handleNotesUpdate}
+          isSubtitleOpen={isSubtitleOpen}
+          onCloseSubtitle={closeSubtitleWindow}
         />
       )}
 
