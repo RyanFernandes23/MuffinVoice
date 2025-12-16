@@ -232,6 +232,8 @@ export default function DashboardPage() {
           onTimeUpdate={(time) => setPlayerTime(time)}
           onDurationChange={setDuration}
           seekTime={seekTime}
+          userId={userId}
+          jobId={currentPlayingNotebook.job_id}
         />
       )}
 

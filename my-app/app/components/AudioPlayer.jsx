@@ -5,7 +5,7 @@ import Hls from 'hls.js';
 import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaVolumeUp, FaVolumeDown, FaVolumeOff, FaVolumeMute, FaTimes } from 'react-icons/fa';
 
 // 1. Accepts 'getToken' function as a prop
-export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp, onDurationChange, seekTime  }) {
+export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onToggleSubtitle, onTimeUpdate: onTimeUpdateProp, onDurationChange, seekTime, userId, jobId  }) {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -16,12 +16,74 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
   const [isMuted, setIsMuted] = useState(false);
   const [isTokenReady, setIsTokenReady] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [showVoiceOptions, setShowVoiceOptions] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState('af_bella');
+  const [voices, setVoices] = useState([]);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [processingVoice, setProcessingVoice] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [modalMessage, setModalMessage] = useState('');
+  const [modalType, setModalType] = useState('info'); // 'info', 'success', 'error'
+  const [currentManifestUrl, setCurrentManifestUrl] = useState(manifestUrl);
   
   const audioRef = useRef(null);
   const hlsRef = useRef(null);
   
   // 2. Ref to hold the current fresh token
   const tokenRef = useRef(null);
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'ready':
+        return 'text-green-400';
+      case 'processing':
+        return 'text-yellow-400';
+      case 'not started':
+        return 'text-gray-400';
+      default:
+        return 'text-gray-400';
+    }
+  };
+
+  // Fetch voice status from backend - only when options pane is open
+  useEffect(() => {
+    if (!userId || !jobId || !getToken || !showVoiceOptions) return;
+
+    const fetchVoiceStatus = async () => {
+      setLoadingVoices(true);
+      try {
+        const token = await getToken();
+        const response = await fetch(`http://localhost:8000/check_voice_status/${userId}/${jobId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          // Map voice names to display names
+          const mappedVoices = data.voices.map(voice => ({
+            id: voice.name,
+            name: formatVoiceName(voice.name),
+            status: voice.status,
+          }));
+          setVoices(mappedVoices);
+          // Set selected voice if available
+          if (mappedVoices.length > 0 && !selectedVoice) {
+            setSelectedVoice(mappedVoices[0].id);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching voice status:', error);
+      } finally {
+        setLoadingVoices(false);
+      }
+    };
+
+    fetchVoiceStatus();
+    // Refresh every 5 seconds only while pane is open
+    const interval = setInterval(fetchVoiceStatus, 5000);
+    return () => clearInterval(interval);
+  }, [userId, jobId, getToken, showVoiceOptions]);
 
   useEffect(() => {
     if (seekTime !== null && audioRef.current && !isSeeking) { // Only update if not actively seeking
@@ -49,6 +111,31 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
     
     return () => clearInterval(interval);
   }, [getToken]);
+
+  // Update manifest URL when notebook changes
+  useEffect(() => {
+    // Stop current playback
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
+
+    // Destroy existing HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    // Reset selected voice to default
+    setSelectedVoice('af_bella');
+    
+    // Update the manifest URL
+    setCurrentManifestUrl(manifestUrl);
+    
+    // Reset time and other states
+    setCurrentTime(0);
+    setDuration(0);
+  }, [manifestUrl]);
 
   // Handle standard audio events (Time, Duration, Progress)
   useEffect(() => {
@@ -112,7 +199,7 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
     if (!isTokenReady) return; 
 
     // Only proceed if HLS is supported and we have the manifest
-    if (Hls.isSupported() && audioRef.current && manifestUrl) {
+    if (Hls.isSupported() && audioRef.current && currentManifestUrl) {
       
       const hlsConfig = {
         xhrSetup: (xhr, url) => {
@@ -123,7 +210,7 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
       };
 
       const hls = new Hls(hlsConfig);
-      hls.loadSource(manifestUrl);
+      hls.loadSource(currentManifestUrl);
       hls.attachMedia(audioRef.current);
       hlsRef.current = hls;
 
@@ -143,7 +230,7 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
         hls.destroy();
       };
     }
-  }, [manifestUrl,isTokenReady]);
+  }, [currentManifestUrl, isTokenReady]);
 
   const togglePlay = () => {
     if (audioRef.current) {
@@ -197,6 +284,90 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
       audioRef.current.playbackRate = rate;
     }
     setPlaybackRate(rate);
+  };
+
+  const handleVoiceSelect = async (voiceId, voiceStatus) => {
+    // If voice is processing, show a wait message
+    if (voiceStatus === 'processing') {
+      setModalType('info');
+      setModalMessage('⏳ Please wait while this voice is being processed. Check back in a few moments!');
+      setShowModal(true);
+      return;
+    }
+    
+    // If voice is not started, request to process it
+    if (voiceStatus === 'not started') {
+      setProcessingVoice(voiceId);
+      try {
+        const token = await getToken();
+        const response = await fetch(`http://localhost:8000/process_voice/${userId}/${jobId}/${voiceId}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        
+        if (response.ok) {
+          console.log(`Started processing voice: ${voiceId}`);
+          setModalType('success');
+          setModalMessage('✓ Processing started for this voice. Please wait while it\'s being processed!');
+          setShowModal(true);
+          // Refresh voice statuses to update the UI
+          setTimeout(() => {
+            window.location.reload();
+          }, 500);
+        } else {
+          const error = await response.json();
+          console.error(`Error processing voice: ${error.detail}`);
+          setModalType('error');
+          setModalMessage(`Error: ${error.detail}`);
+          setShowModal(true);
+        }
+      } catch (error) {
+        console.error('Error starting voice processing:', error);
+        setModalType('error');
+        setModalMessage('Error starting voice processing');
+        setShowModal(true);
+      } finally {
+        setProcessingVoice(null);
+      }
+    } else {
+      // For ready voices, select them and load the new manifest
+      setSelectedVoice(voiceId);
+      
+      // Construct the new manifest URL for the selected voice
+      const newManifestUrl = `http://localhost:8000/stream/${userId}/${jobId}/${voiceId}/manifest.m3u8`;
+      
+      // Stop current playback
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      }
+      
+      // Destroy existing HLS instance if any
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+      
+      // Update manifest URL to trigger HLS re-initialization
+      setCurrentManifestUrl(newManifestUrl);
+      
+      // Close voice options pane
+      setShowVoiceOptions(false);
+    }
+  };
+
+  const formatVoiceName = (voiceName) => {
+    // Convert voice folder names like 'af_bella' to 'Bella (Female)'
+    const parts = voiceName.split('_');
+    if (parts.length === 2) {
+      const code = parts[0];
+      const name = parts[1];
+      // Determine gender based on prefix: af/bf = Female, am/bm/em = Male
+      const gender = (code.startsWith('af') || code.startsWith('bf')) ? 'Female' : (code.startsWith('am') || code.startsWith('bm') || code.startsWith('em')) ? 'Male' : 'Unknown';
+      return `${name.charAt(0).toUpperCase() + name.slice(1)} (${gender})`;
+    }
+    return voiceName.charAt(0).toUpperCase() + voiceName.slice(1);
   };
 
   const handleMuteToggle = () => {
@@ -300,9 +471,85 @@ export default function AudioPlayer({ title, manifestUrl, getToken, onClose, onT
             Subtitles
           </button>
 
+          {/* Switch Voice Button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowVoiceOptions(!showVoiceOptions)}
+              className="text-lg px-4 py-2 rounded-full bg-yellow-400 text-black font-bold hover:bg-yellow-500 transition-colors duration-200"
+            >
+              Switch Voice
+            </button>
+
+            {/* Voice Options Pane */}
+            {showVoiceOptions && (
+              <div className="absolute bottom-12 right-0 bg-gray-800 border border-yellow-400 rounded-lg shadow-xl p-4 w-56 max-h-64 overflow-y-auto z-50">
+                <h3 className="text-white font-semibold mb-3 text-sm">Select Voice</h3>
+                <div className="space-y-2">
+                  {voices.map((voice) => (
+                    <button
+                      key={voice.id}
+                      onClick={() => handleVoiceSelect(voice.id, voice.status)}
+                      disabled={processingVoice === voice.id}
+                      className={`w-full px-3 py-2 rounded transition-colors duration-200 text-sm flex justify-between items-center ${
+                        processingVoice === voice.id 
+                          ? 'bg-gray-600 text-gray-400 cursor-wait opacity-50'
+                          : voice.status === 'not started'
+                          ? 'bg-gray-700 text-white hover:bg-blue-600 hover:text-white cursor-pointer'
+                          : selectedVoice === voice.id
+                          ? 'bg-yellow-400 text-black font-semibold'
+                          : 'bg-gray-700 text-white hover:bg-gray-600'
+                      }`}
+                      title={voice.status === 'not started' ? 'Click to start processing this voice' : ''}
+                    >
+                      <span>{voice.name}</span>
+                      <span className={`text-xs font-semibold ${selectedVoice === voice.id && voice.status !== 'not started' ? 'text-black' : getStatusColor(voice.status)}`}>
+                        {processingVoice === voice.id ? 'Processing...' : voice.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
+
+      {/* Voice Status Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center backdrop-blur-sm">
+          <div className="bg-white rounded-lg p-8 shadow-2xl w-full max-w-md">
+            <div className="flex flex-col items-center">
+              {modalType === 'info' && (
+                <div className="text-5xl mb-4">⏳</div>
+              )}
+              {modalType === 'success' && (
+                <div className="text-5xl mb-4">✓</div>
+              )}
+              {modalType === 'error' && (
+                <div className="text-5xl mb-4">❌</div>
+              )}
+              
+              <p className={`text-center text-lg font-semibold mb-6 ${
+                modalType === 'error' ? 'text-red-600' : 
+                modalType === 'success' ? 'text-green-600' : 
+                'text-gray-800'
+              }`}>
+                {modalMessage}
+              </p>
+              
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-6 py-2 bg-yellow-400 text-black rounded-md hover:bg-yellow-500 font-semibold transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
 }
+

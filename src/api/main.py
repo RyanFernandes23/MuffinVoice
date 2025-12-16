@@ -28,6 +28,16 @@ load_dotenv()
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
+# Available voices for TTS processing
+AVAILABLE_VOICES = [
+    'af_bella',
+    'af_sarah',
+    'am_michael',
+    'bm_fable',
+    'bf_emma',
+    'em_alex'
+]
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -385,3 +395,133 @@ async def serve_chunk(user_id:str, job_id:str, token_payload = Depends(clerk_aut
         return Response(content, media_type="application/json")
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error retrieving chunks.json")
+
+@app.get("/check_voice_status/{user_id}/{job_id}")
+async def check_voice_status(user_id: str, job_id: str, token_payload = Depends(clerk_auth)):
+    """
+    Lists all available voices and their processing status for a job.
+    
+    Status meanings:
+    - ready: Voice folder exists with audio files (manifest.m3u8 present)
+    - processing: Job is processing this voice
+    - not started: Voice hasn't been processed yet for this job
+    """
+    if token_payload.decoded.get("sub") != user_id:
+        logger.warning(f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}")
+        raise HTTPException(status_code=403, detail="You do not have permission to view this file.")
+    
+    try:
+        # Get job status first
+        job_data = get_job_status(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        job_status = job_data.get("status", "unknown")
+        s3_voices_prefix = f"{user_id}/{job_id}/voices/"
+        
+        # List all objects under the voices prefix
+        response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_voices_prefix, Delimiter="/")
+        
+        # Get existing voice folders from S3
+        existing_voices = set()
+        if 'CommonPrefixes' in response:
+            for prefix in response['CommonPrefixes']:
+                voice_name = prefix['Prefix'].rstrip('/').split('/')[-1]
+                existing_voices.add(voice_name)
+        
+        voices_status = []
+        
+        # Check status for all available voices
+        for voice in AVAILABLE_VOICES:
+            if voice in existing_voices:
+                # Voice folder exists - check if manifest.m3u8 file exists
+                voice_prefix = f"{s3_voices_prefix}{voice}/"
+                manifest_key = f"{voice_prefix}manifest.m3u8"
+                
+                try:
+                    # Check if manifest file exists
+                    s3.head_object(Bucket="ttsfiles", Key=manifest_key)
+                    # Manifest exists - voice is ready
+                    status = "ready"
+                except s3.exceptions.ClientError as e:
+                    if e.response['Error']['Code'] == '404':
+                        # Folder exists but manifest doesn't - voice is still processing
+                        status = "processing"
+                    else:
+                        status = "processing"
+            else:
+                # Voice folder doesn't exist - not started yet
+                status = "not started"
+            
+            voices_status.append({
+                "name": voice,
+                "status": status
+            })
+        
+        logger.info(f"Voice status check for job {job_id}: {len(voices_status)} voices found")
+        return {
+            "job_id": job_id,
+            "job_status": job_status,
+            "voices": voices_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking voice status for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error checking voice status")
+
+@app.post("/process_voice/{user_id}/{job_id}/{voice}")
+async def process_voice(
+    user_id: str, 
+    job_id: str, 
+    voice: str,
+    background_tasks: BackgroundTasks,
+    token_payload = Depends(clerk_auth),
+    session: Session = Depends(get_session)
+):
+    """
+    Starts processing a specific voice for an existing job.
+    This allows users to generate additional voices without re-uploading the file.
+    """
+    if token_payload.decoded.get("sub") != user_id:
+        logger.warning(f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}")
+        raise HTTPException(status_code=403, detail="You do not have permission to perform this action.")
+    
+    if voice not in AVAILABLE_VOICES:
+        raise HTTPException(status_code=400, detail=f"Invalid voice: {voice}")
+    
+    try:
+        # Verify the job exists and belongs to the user
+        statement = select(Notebook).where(
+            Notebook.job_id == job_id,
+            Notebook.user_id == user_id
+        )
+        notebook = session.exec(statement).first()
+        
+        if not notebook:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if voice already exists in S3
+        s3_voice_prefix = f"{user_id}/{job_id}/voices/{voice}/"
+        response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_voice_prefix, MaxKeys=1)
+        
+        if 'Contents' in response:
+            raise HTTPException(status_code=400, detail=f"Voice {voice} is already being processed or completed for this job")
+        
+        # Queue the voice processing task
+        background_tasks.add_task(process_speeches, user_id, job_id, voice)
+        
+        logger.info(f"Queued voice processing for user {user_id}, job {job_id}, voice {voice}")
+        
+        return {
+            "message": f"Processing started for voice {voice}",
+            "job_id": job_id,
+            "voice": voice
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing voice {voice} for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error starting voice processing")

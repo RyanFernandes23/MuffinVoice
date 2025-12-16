@@ -8,8 +8,19 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   const [error, setError] = useState(null);
   const { getToken } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState('af_bella');
 
   const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
+  // Available voices for initial processing
+  const voices = [
+    { id: 'af_bella', name: 'Bella (Female)' },
+    { id: 'af_sarah', name: 'Sarah (Female)' },
+    { id: 'am_michael', name: 'Michael (Male)' },
+    { id: 'bm_fable', name: 'Fable (Male)' },
+    { id: 'bf_emma', name: 'Emma (Female)' },
+    { id: 'em_alex', name: 'Alex (Male)' },
+  ];
 
   // FIX 2: Reset state when modal opens/closes
   useEffect(() => {
@@ -83,7 +94,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
           method: 'POST',
           headers: {
             'X-User-ID': '123',
-            'voice': 'af_bella',
+            'voice': selectedVoice,
             Authorization: `Bearer ${token}`,
             // Do NOT set Content-Type header manually when using FormData
           },
@@ -156,6 +167,23 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
             </div>
           </div>
           {error && <p className="text-sm text-red-500 mt-2 text-center">{error}</p>}
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-900 mb-2">Initial Voice</label>
+          <select
+            value={selectedVoice}
+            onChange={(e) => setSelectedVoice(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-gray-900"
+            disabled={isUploading}
+          >
+            {voices.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voice.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-700 mt-1">Choose which voice to process first. Other voices can be generated later.</p>
         </div>
 
         <div className="flex justify-end space-x-4">
