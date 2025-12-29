@@ -82,9 +82,20 @@ openai.NotFoundError: The endpoint pretelephonic-loralee-resignedly.ngrok-free.d
 
 ERR_NGROK_3200
 [2025-12-15 21:20:09,072] [PID 11968] [Thread-7] [dramatiq.middleware.retries.Retries] [INFO] Retrying message 'd3034d29-1a78-421f-925f-42de9e45d53b' in 877980 milliseconds.
+--MVP:
+8. think on adding paywall for enpoints.
+9. voice polling logic improvement. poll continuous when something is processing.
+10. deleting the notes in postgres after deleting notebook.
 
-6. create new voice endpoint.
-8. think on adding paywall for endpoints.
+--Stable release:
+11. Ads
+12. terms and conditions (if user tries to delete and upload to avoid upload limit)
+13. webpages support.
+14. typing text support.
+15. ocr support.
+
+
+
 
 npm run dev
 
