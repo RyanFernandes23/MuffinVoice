@@ -1,0 +1,9 @@
+next js sends post request to POST /create-checkout-session with the user's ID.
+
+this endpoint tells stripe to setup a payment page for this user x for $10 price.
+returns payment url to frontend
+
+frontend redirects to this new url in new tab.
+
+currency in custom for different countries.
+file size limit check for different tiers.

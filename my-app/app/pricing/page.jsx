@@ -1,7 +1,6 @@
 'use client';
 
 import { Check, X } from 'lucide-react';
-import Header from '../components/Header';
 
 export default function PricingPage() {
   const pricingTiers = [
@@ -9,10 +8,11 @@ export default function PricingPage() {
       name: 'Explorer',
       price: 'Free',
       description: 'Try before you upgrade',
-      monthlyLimit: '30 Minutes/Month',
+      monthlyLimit: '20 Minutes/Month',
       features: [
         { text: 'Convert articles to audio', available: true },
         { text: '1 Voice per Notebook', available: true },
+        { text: 'Max file size: 50MB', available: true },
         { text: 'Can download audio', available: false },
       ],
       highlighted: false,
@@ -26,6 +26,7 @@ export default function PricingPage() {
       monthlyLimit: '5 Hours/Month',
       features: [
         { text: 'All voices per notebook', available: true },
+        { text: 'Max file size: 100MB', available: true },
         { text: 'Can download audio', available: true },
       ],
       highlighted: true,
@@ -33,12 +34,13 @@ export default function PricingPage() {
     },
     {
       name: 'Professional',
-      price: '$10',
+      price: '$12',
       period: '/month',
       description: 'For serious content creators',
       monthlyLimit: '20 Hours/Month',
       features: [
         { text: 'All voices per notebook', available: true },
+        { text: 'Max file size: 100MB', available: true },
         { text: 'Can download audio', available: true },
       ],
       highlighted: false,
@@ -46,14 +48,13 @@ export default function PricingPage() {
     },
   ];
 
-  return (
+return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <Header />
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
         {/* Header Section */}
         <div className="text-center mb-16">
-          <h1 className="text-5xl font-bold text-white mb-4">
+          <h1 className="text-5xl font-bold text-white mb-4 bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
             Simple, Transparent Pricing
           </h1>
           <p className="text-xl text-slate-400 max-w-2xl mx-auto">
@@ -66,14 +67,14 @@ export default function PricingPage() {
           {pricingTiers.map((tier, index) => (
             <div
               key={index}
-              className={`relative rounded-2xl transition-all duration-300 ${
+              className={`relative rounded-2xl transition-all duration-300 hover:scale-105 ${
                 tier.highlighted
                   ? 'md:scale-105 bg-gradient-to-br from-blue-600 to-blue-700 ring-2 ring-blue-400 shadow-2xl'
-                  : 'bg-slate-800 hover:bg-slate-750 shadow-lg'
+                  : 'bg-slate-800 hover:bg-slate-750 shadow-xl'
               }`}
             >
               {tier.highlighted && (
-                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-yellow-400 text-slate-900 px-4 py-1 rounded-full text-sm font-semibold">
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-yellow-400 to-orange-400 text-slate-900 px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
                   Most Popular
                 </div>
               )}
@@ -92,13 +93,13 @@ export default function PricingPage() {
                       {tier.period}
                     </span>
                   )}
-                  <p className={`mt-2 text-sm ${tier.highlighted ? 'text-blue-100' : 'text-slate-400'}`}>
+                  <p className={`mt-2 text-sm ${tier.highlighted ? 'text-white' : 'text-slate-400'}`}>
                     {tier.description}
                   </p>
                 </div>
 
                 {/* Limits */}
-                <div className={`mb-6 p-4 rounded-lg ${tier.highlighted ? 'bg-blue-700 bg-opacity-50' : 'bg-slate-700 bg-opacity-50'}`}>
+                <div className={`mb-6 p-4 rounded-lg ${tier.highlighted ? 'bg-blue-800 bg-opacity-50' : 'bg-slate-700 bg-opacity-50'}`}>
                   <p className={`text-sm font-semibold ${tier.highlighted ? 'text-blue-100' : 'text-slate-300'}`}>
                     Monthly Limit
                   </p>
@@ -112,7 +113,7 @@ export default function PricingPage() {
                   className={`w-full py-3 px-4 rounded-lg font-semibold mb-6 transition-all duration-200 ${
                     tier.highlighted
                       ? 'bg-white text-blue-600 hover:bg-blue-50 hover:shadow-lg'
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800'
                   }`}
                 >
                   {tier.cta}
@@ -123,22 +124,24 @@ export default function PricingPage() {
                   {tier.features.map((feature, idx) => (
                     <div key={idx} className="flex items-start gap-3">
                       {feature.available ? (
-                        <Check
-                          className={`w-5 h-5 flex-shrink-0 ${tier.highlighted ? 'text-blue-100' : 'text-green-400'}`}
-                        />
+                        <div className={`p-1 rounded-full bg-green-100`}>
+                          <Check
+                            className={`w-4 h-4 flex-shrink-0 text-green-600`}
+                          />
+                        </div>
                       ) : (
-                        <X
-                          className={`w-5 h-5 flex-shrink-0 ${tier.highlighted ? 'text-blue-200' : 'text-slate-500'}`}
-                        />
+                        <div className={`p-1 rounded-full bg-red-100`}>
+                          <X
+                            className={`w-4 h-4 flex-shrink-0 text-red-600`}
+                          />
+                        </div>
                       )}
-                      <span className={`text-sm ${feature.available ? (tier.highlighted ? 'text-blue-100' : 'text-slate-300') : (tier.highlighted ? 'text-blue-200' : 'text-slate-400')}`}>
+                      <span className={`text-sm ${feature.available ? (tier.highlighted ? 'text-white' : 'text-slate-300') : (tier.highlighted ? 'text-white' : 'text-slate-400')}`}>
                         {feature.text}
                       </span>
                     </div>
                   ))}
                 </div>
-
-
               </div>
             </div>
           ))}
@@ -165,7 +168,7 @@ export default function PricingPage() {
           <p className="text-slate-400 mb-6">
             Choose the plan that fits your needs.
           </p>
-          <button className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-semibold transition-all duration-200 shadow-lg hover:shadow-xl">
+          <button className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 py-3 rounded-lg font-semibold transition-all duration-200 shadow-lg hover:shadow-xl">
             Get Started Today
           </button>
         </div>
