@@ -4,24 +4,29 @@ from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends, B
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from uuid import uuid4
-from src.TTS_Workers.tasks import process_speeches, get_s3_client, update_job_status
+from src.TTS_Workers.tasks import get_s3_client, process_speeches
 import redis
-from sqlmodel import SQLModel, Field, Session, create_engine, select
-from src.TextExtractor.text_extractor import TextExtractor
-from src.Chunker.chunker import segment_text
-from src.TextCleaner.cleaner import cleaner_stage_2
-from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
+from sqlmodel import Session, select, desc
+from sqlalchemy import or_, func
 import os
 from src.utils.RedisClient import redis_client
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-import json
-import re
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from src.api.schema import Notebook, Note
+from src.api.utils import (
+    sanitize_display_filename,
+    get_unique_notebook_title,
+    set_job_status,
+    get_job_status,
+    create_db_and_tables,
+    get_session,
+    update_db_status,
+    process_file_task
+)
 from typing import Optional, List
 from datetime import datetime
 
@@ -43,66 +48,11 @@ AVAILABLE_VOICES = [
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-clerk_config = ClerkConfig(jwks_url=os.getenv("CLERK_JWKS_URL"))
+jwks_url = os.getenv("CLERK_JWKS_URL")
+if not jwks_url:
+    raise ValueError("CLERK_JWKS_URL environment variable is required")
+clerk_config = ClerkConfig(jwks_url=jwks_url)
 clerk_auth = ClerkHTTPBearer(config=clerk_config)
-
-def sanitize_display_filename(filename: str) -> str:
-    """
-    Sanitizes a filename for display and database storage, removing potentially harmful characters.
-    Keeps alphanumeric, spaces, periods, hyphens, and underscores.
-    """
-    # Using a regex to allow a broader set of "safe" characters while removing potentially malicious ones.
-    # This regex keeps letters, numbers, spaces, periods, hyphens, and underscores.
-    # It also removes leading/trailing spaces and multiple consecutive spaces.
-    sanitized = re.sub(r'[^\w\s\.\-]', '', filename)
-    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
-    return sanitized
-
-def get_unique_notebook_title(user_id: str, desired_title: str, session: Session) -> str:
-    """
-    Generates a unique notebook title for a user, appending (N) if necessary.
-    """
-    base_name, ext = os.path.splitext(desired_title)
-    counter = 1
-    unique_title = desired_title
-
-    while True:
-        statement = select(Notebook).where(
-            Notebook.user_id == user_id,
-            Notebook.title == unique_title
-        )
-        existing_notebook = session.exec(statement).first()
-
-        if not existing_notebook:
-            return unique_title
-        
-        counter += 1
-        unique_title = f"{base_name} ({counter}){ext}"
-
-
-def set_job_status(job_id: str, status: str, extra: dict = None):
-    """
-    Updates BOTH Redis (for speed/real-time) and SQL (for persistence).
-    """
-    # 1. Update Redis
-    data = {"status": status}
-    if extra:
-        data.update(extra)
-    redis_client.hset(f"job:{job_id}", mapping=data)
-    logger.info(f"DEBUG: Wrote job:{job_id} to Redis with status {status}") 
-
-    # 2. Sync to SQL
-    update_db_status(job_id, status)
-    logger.info(f"Job {job_id} status updated to {status}")
-
-def get_job_status(job_id: str):
-    job_status = redis_client.hgetall(f"job:{job_id}")
-    return job_status
-
-engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
-
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -110,25 +60,6 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     yield
     # This runs AFTER the app stops
-
-def get_session():
-    with Session(engine) as session:
-        yield session
-
-def update_db_status(job_id: str, status: str):
-    try:
-        with Session(engine) as session:
-            statement = select(Notebook).where(Notebook.job_id == job_id)
-            notebook = session.exec(statement).first()
-            if notebook:
-                notebook.status = status
-                session.add(notebook)
-                session.commit()
-                logger.info(f"Synced DB status for {job_id} to {status}")
-            else:
-                logger.warning(f"Could not find notebook {job_id} in DB to update status")
-    except Exception as e:
-        logger.error(f"Failed to sync DB status: {e}")
 
 app = FastAPI(title="TTS API with Dramatiq", lifespan=lifespan)
 
@@ -142,63 +73,6 @@ app.add_middleware(
 )
 
 s3 = get_s3_client()
-
-def process_file_task(user_id, job_id, file_path, voice):
-    # Update status to processing in Redis AND DB
-    set_job_status(job_id, "processing")
-    
-    c1_chunks = []
-    c2_chunks = []
-    try:
-        logging.info(f"Starting process_file_task for job {job_id} with file {file_path}")
-        cleaner1 = TTSTextCleaner()
-
-        extractor = TextExtractor(file_path)
-        full_text = extractor.extract_file()
-        text_chunks = segment_text(full_text)
-        
-        for chunk in text_chunks:
-            if isinstance(chunk, list):
-                chunk = " ".join(str(item) for item in chunk)
-            
-            cleaned_chunk1 = cleaner1(chunk, abbrevate=False)
-            c1_chunks.append(cleaned_chunk1)
-            
-            cleaned_chunk1 = cleaner1(chunk, abbrevate=True)
-            cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1)
-            c2_chunks.append(cleaned_chunk2)
-        
-        logging.info(f"extraction and chunking completed")
-
-        s3_prefix = f"{user_id}/{job_id}"
-        
-        # Upload intermediate files
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks_c1.json",
-                      Body=json.dumps(c1_chunks).encode("utf-8"),
-                      ContentType="application/json")
-
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json",
-                      Body=json.dumps(c2_chunks).encode("utf-8"),
-                      ContentType="application/json")
-
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/full_text.txt",
-                      Body=full_text.encode("utf-8"),
-                      ContentType="text/plain")
-
-        os.remove(file_path)
-        logging.info(f"[TASK] Completed text extraction for {file_path}")
-
-        # Trigger Dramatiq worker
-        process_speeches.send(user_id, job_id, voice)
-        
-        logger.info(f"Queued process_speeches for job {job_id}")
-
-    except Exception as e:
-        set_job_status(job_id, "failed", {"error": str(e)})
-        logging.error(f"process_file_task failed for job {job_id}: {e}", exc_info=True)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise
 
 @app.post("/upload_file")
 async def upload_file(
@@ -217,8 +91,11 @@ async def upload_file(
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
 
-    # Sanitize the original filename for display and database storage
+# Sanitize the original filename for display and database storage
     original_filename = file.filename
+    if not original_filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    
     sanitized_display_title = sanitize_display_filename(original_filename)
     
     # Get a unique title for the notebook entry in the database
@@ -265,7 +142,7 @@ async def get_my_notebooks(
     session: Session = Depends(get_session)
 ):
     user_id = token_payload.decoded.get("sub")
-    statement = select(Notebook).where(Notebook.user_id == user_id).order_by(Notebook.created_at.desc())
+    statement = select(Notebook).where(Notebook.user_id == user_id).order_by(desc(Notebook.created_at))
     return session.exec(statement).all()
 
 @app.delete("/notebooks/{job_id}", status_code=204)
@@ -412,12 +289,12 @@ async def check_voice_status(user_id: str, job_id: str, token_payload = Depends(
         raise HTTPException(status_code=403, detail="You do not have permission to view this file.")
     
     try:
-        # Get job status first
+# Get job status first
         job_data = get_job_status(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
         
-        job_status = job_data.get("status", "unknown")
+        job_status = job_data.get(b"status", b"unknown").decode('utf-8') if job_data else "unknown"
         s3_voices_prefix = f"{user_id}/{job_id}/voices/"
         
         # List all objects under the voices prefix
@@ -618,14 +495,11 @@ async def get_notes(
             Note.user_id == user_id
         )
         
-        if search:
-            search_term = f"%{search}%"
-            statement = statement.where(
-                (Note.user_note.ilike(search_term)) | (Note.subtitle_text.ilike(search_term))
-            )
+        # TODO: Implement search functionality after fixing redis client
         
         # Order by timestamp
-        statement = statement.order_by(Note.timestamp)
+        notes = session.exec(statement).all()
+        notes = sorted(notes, key=lambda note: note.timestamp)
         notes = session.exec(statement).all()
         
         return {
