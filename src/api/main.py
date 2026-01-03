@@ -1,6 +1,6 @@
 import logging
 # filepath: c:\Users\Hp\OneDrive\Desktop\WikiVoice\src\api\main.py
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, Request, UploadFile, File, Header, HTTPException, Depends, BackgroundTasks
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +9,7 @@ import redis
 from sqlmodel import Session, select, desc
 from sqlalchemy import or_, func
 import os
+import hmac, hashlib
 from src.utils.RedisClient import redis_client
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +17,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
-from src.api.schema import Notebook, Note
+from src.api.schema import Notebook, Note, UserSubscription
 from src.api.utils import (
     sanitize_display_filename,
     get_unique_notebook_title,
@@ -667,3 +668,57 @@ async def get_notes_count(
         logger.error(f"Error getting notes count for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Error getting notes count")
 
+
+def check_user_access(user_id: str, session: Session):
+    sub = session.get(UserSubscription, user_id)
+    
+    if not sub:
+        return False # No subscription ever
+        
+    # LOGIC: Allow if active OR (cancelled but still in paid period)
+    is_active = sub.status == "active"
+    is_grace_period = (
+        sub.status == "cancelled" and 
+        sub.current_period_end and 
+        sub.current_period_end > datetime.utcnow()
+    )
+    
+    if is_active or is_grace_period:
+        return True
+        
+    return False
+
+
+@app.post("/api/webhook")
+async def lemonsqueezy_webhook(request: Request):
+    # 1. Verify Signature
+    signature = request.headers.get("X-Signature")
+    raw_body = await request.body()
+    
+    # Create HMAC SHA256 hash of the raw body using your secret
+    expected_signature = hmac.new(
+        LS_SIGNING_SECRET.encode(),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Use compare_digest to prevent timing attacks
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    # 2. Process Event
+    payload = await request.json()
+    event_name = payload["meta"]["event_name"]
+    custom_data = payload["data"]["attributes"]["test_mode"] 
+    
+    if event_name == "subscription_created":
+        # Grant access to user
+        pass
+    elif event_name == "subscription_updated":
+        # Handle upgrades/downgrades
+        pass
+    elif event_name == "subscription_cancelled":
+        # Revoke access (or set to revoke at period end)
+        pass
+        
+    return {"status": "processed"}
