@@ -8,7 +8,7 @@ export default function PricingPage() {
       name: 'Explorer',
       price: 'Free',
       description: 'Try before you upgrade',
-      monthlyLimit: '20 Minutes/Month',
+      monthlyLimit: '15k characters/Month',
       features: [
         { text: 'Convert articles to audio', available: true },
         { text: '1 Voice per Notebook', available: true },
@@ -23,7 +23,7 @@ export default function PricingPage() {
       price: '$5',
       period: '/month',
       description: 'For podcasters & authors',
-      monthlyLimit: '5 Hours/Month',
+      monthlyLimit: '250k characters/Month',
       features: [
         { text: 'All voices per notebook', available: true },
         { text: 'Max file size: 100MB', available: true },
@@ -37,7 +37,7 @@ export default function PricingPage() {
       price: '$12',
       period: '/month',
       description: 'For serious content creators',
-      monthlyLimit: '20 Hours/Month',
+      monthlyLimit: '1M characters/Month',
       features: [
         { text: 'All voices per notebook', available: true },
         { text: 'Max file size: 100MB', available: true },

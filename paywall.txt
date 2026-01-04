@@ -1,9 +1,23 @@
-next js sends post request to POST /create-checkout-session with the user's ID.
+Create checkout endpoint in fastapi
+	- Check db if user already has a subscription.
+	- Send request to lemonsqueezy with correect payload
+	- Get the url and return it to user.
+	
 
-this endpoint tells stripe to setup a payment page for this user x for $10 price.
-returns payment url to frontend
+Create webhook handler
+	- Verify signature and use compare_digest to check.
+	- extract payload
+	- update db based on event
+		- update status, variant_id, user_id, subscription_id
 
-frontend redirects to this new url in new tab.
+check user access(middleware):
+    - check subscription status of user hitting the endpoint.
+    - we have limits for 250k characters/month and 1M characters/month for creator and professional.
+        - we have to check the approximate character length of file (pdf, txt, epub, etc)
+            - based on this we compare this info with the max length in his plan from the start date of the plan.
+            - the best way to calculate the length of the file is to use len(full_text) from process_file_task function in utils.py
+                - we allow the user if the length is within the boundary().
+                - we increment this new length for the user (current_file_length_exhausted+= new_file_length)
+                - store this new length in the db.
 
-currency in custom for different countries.
-file size limit check for different tiers.
+

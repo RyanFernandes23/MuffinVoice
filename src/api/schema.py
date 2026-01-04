@@ -44,4 +44,8 @@ class UserSubscription(SQLModel, table=True):
         nullable=True
     )  # When does access actully end?
 
+    # Character Limits
+    monthly_char_used: int = Field(default=0)
+    last_usage_reset_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+
     updated_at: datetime = Field(default_factory=datetime.now(timezone.utc))
