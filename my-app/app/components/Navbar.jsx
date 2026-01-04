@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
+import UsageProgress from './UsageProgress';
 
 export default function Navbar() {
   return (
@@ -8,10 +9,11 @@ export default function Navbar() {
         <div className="text-yellow-400 font-bold text-xl">
           <Link href="/">Muffin</Link>
         </div>
-        <div className="flex space-x-4">
+        <div className="flex space-x-4 items-center">
           <Link href="/pricing" className="text-yellow-400 hover:text-white">Pricing</Link>
           <Link href="/dashboard" className="text-yellow-400 hover:text-white">Dashboard</Link>
           <SignedIn>
+            <UsageProgress />
             {/* Mount the UserButton component */}
             <UserButton afterSignOutUrl="/" />
           </SignedIn>

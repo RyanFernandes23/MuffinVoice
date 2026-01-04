@@ -20,4 +20,35 @@ check user access(middleware):
                 - we increment this new length for the user (current_file_length_exhausted+= new_file_length)
                 - store this new length in the db.
 
+error handling in file upload:
+    - incase of error during file upload at any stage.
+        - like failing to upload file.
+        - failed to process audio.
+        - we need to rollback db updates such as character usage for that file.
+            - why we don't want the characters to exhaust if the file upload didn't process and give desired result.
+            - we only update the character count when file is uploaded successfully to s3.
 
+deleting notes:
+    - when we delete a notebook we also need to cleanup the notes associated with that job_id.
+
+
+lemonsqueezy configuration:
+    - we now have checkout endpoint and webhook.
+    - what else do we need.
+
+deleting user account:
+    - we need a mechanism to delete user account
+    - but keep his metadata on his monthly usage etc.
+    - why: because he might try to create new account with same email and able to access even if previously when they had exhausted the limits with same email previously created.
+    - 
+
+adding token usage in for the user for that month and showing plan that he currently has:
+    - we need to get this total character usage data
+    - we need to get the plan they currently have.
+    - we need a frontend component to show users total usage
+        - we need a some loading kinda component with bar to show how much is consumed out of what he has.
+        - show this on the navbar once logged in.
+    - Note: when user upgrades to a plan like creator or professional we reset this count.
+    - A user cannot buy a same tier twice.
+    
+    - we will provide a new way to by perks options( this is for later)

@@ -17,13 +17,12 @@ from src.api.schema import Notebook, UserSubscription
 from dotenv import load_dotenv
 
 # Subscription Character Limits
-# NOTE: Replace these placeholder IDs with actual Lemon Squeezy Variant IDs when known.
-CREATOR_VARIANT_ID = "12345"  # Placeholder
-PROFESSIONAL_VARIANT_ID = "67890"  # Placeholder
+CREATOR_VARIANT_ID = os.getenv("LEMON_SQUEEZY_CREATOR_VARIANT_ID", "")
+PROFESSIONAL_VARIANT_ID = os.getenv("LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID", "")
 
 SUBSCRIPTION_LIMITS = {
-    CREATOR_VARIANT_ID: 250000,  # 250k
-    PROFESSIONAL_VARIANT_ID: 1000000,  # 1M
+    CREATOR_VARIANT_ID: 250000,
+    PROFESSIONAL_VARIANT_ID: 1000000,
 }
 DEFAULT_LIMIT = 5000  # Free/Explorer plan limit
 
@@ -127,6 +126,29 @@ def update_db_status(job_id: str, status: str):
         logger.error(f"Failed to sync DB status: {e}")
 
 
+def increment_user_usage(user_id: str, char_length: int):
+    """Increments the monthly character usage for a user if a subscription exists."""
+    try:
+        with Session(engine) as session:
+            sub = session.get(UserSubscription, user_id)
+            if sub:
+                sub.monthly_char_used += char_length
+                sub.updated_at = datetime.now(timezone.utc)
+                session.add(sub)
+                session.commit()
+                # Fetch limit for logging
+                limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
+                logger.info(
+                    f"User {user_id} usage successfully incremented. New total used: {sub.monthly_char_used}/{limit}"
+                )
+            else:
+                logger.warning(
+                    f"Could not find subscription for user {user_id} to increment usage."
+                )
+    except Exception as e:
+        logger.error(f"Failed to increment user usage for {user_id}: {e}")
+
+
 def process_file_task(user_id, job_id, file_path, voice):
     # Update status to processing in Redis AND DB
     set_job_status(job_id, "processing")
@@ -194,16 +216,6 @@ def process_file_task(user_id, job_id, file_path, voice):
                     f"Character limit exceeded. File length: {file_char_length}. Remaining limit: {remaining}."
                 )
 
-            # Update Usage (only for users with a subscription record)
-            if sub:
-                sub.monthly_char_used += file_char_length
-                sub.updated_at = datetime.now(timezone.utc)
-                session.add(sub)
-                session.commit()
-                logger.info(
-                    f"User {user_id} usage updated. Total used: {sub.monthly_char_used}/{limit}"
-                )
-
         # --- END: Character Limit Check & Enforcement ---
 
         text_chunks = segment_text(full_text)
@@ -248,6 +260,9 @@ def process_file_task(user_id, job_id, file_path, voice):
 
         os.remove(file_path)
         logging.info(f"[TASK] Completed text extraction for {file_path}")
+
+        # Increment user usage as S3 upload succeeded
+        increment_user_usage(user_id, file_char_length)
 
         # Trigger Dramatiq worker
         process_speeches.send(user_id, job_id, voice)

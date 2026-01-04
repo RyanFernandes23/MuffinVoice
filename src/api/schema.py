@@ -10,7 +10,7 @@ class Notebook(SQLModel, table=True):
     job_id: str = Field(unique=True, index=True)
     title: str
     voice: str
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = Field(default="processing")
 
 
@@ -21,8 +21,8 @@ class Note(SQLModel, table=True):
     timestamp: float  # Audio timestamp in seconds
     user_note: str  # The note text
     subtitle_text: Optional[str] = None  # Context: subtitle text at that moment
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
         return f"<Note user_id={self.user_id} job_id={self.job_id} timestamp={self.timestamp}>"
@@ -46,6 +46,8 @@ class UserSubscription(SQLModel, table=True):
 
     # Character Limits
     monthly_char_used: int = Field(default=0)
-    last_usage_reset_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    last_usage_reset_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
-    updated_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
