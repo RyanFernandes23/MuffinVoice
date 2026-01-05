@@ -100,6 +100,8 @@ ngrok config:
 
 -- same with tts
 
+--test payment by upgrading
+
 
 
 

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
-import os, hmac, hashlib, httpx
+import os, hmac, hashlib, httpx, urllib.parse
 from datetime import datetime, timezone
 from src.api.utils import get_session, engine
 from src.api.schema import UserSubscription
@@ -27,7 +27,7 @@ class CheckoutRequest(BaseModel):
     variant_id: str
 
 
-VALID_VARIANT_IDS = {LS_CREATOR_VARIANT_ID, LS_PROFESSIONAL_VARIANT_ID}
+VALID_VARIANT_IDS = {str(LS_CREATOR_VARIANT_ID), str(LS_PROFESSIONAL_VARIANT_ID)}
 
 PLAN_NAMES = {
     LS_CREATOR_VARIANT_ID: "Creator",
@@ -39,38 +39,27 @@ PLAN_NAMES = {
 async def create_lemon_squeezy_checkout(
     variant_id: str, user_id: str, user_email: str
 ) -> str:
-    checkout_url = f"{LS_API_URL}/checkouts"
-    payload = {
-        "data": {
-            "type": "checkouts",
-            "attributes": {
-                "store_id": LS_STORE_ID,
-                "variant_id": variant_id,
-                "custom_data": {
-                    "user_id": user_id,
-                },
-                "email": user_email,
-            },
-        }
+    """
+    Generate a Lemon Squeezy checkout URL directly.
+    This approach avoids API call issues and is more reliable.
+    """
+    checkout_url = f"https://store.lemonsqueezy.com/checkout/buy/{variant_id}"
+
+    params = {
+        "checkout[custom][user_id]": user_id,
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            checkout_url,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {LS_API_KEY}",
-                "Accept": "application/vnd.api+json",
-                "Content-Type": "application/vnd.api+json",
-            },
-            timeout=30.0,
-        )
-        if response.status_code != 201:
-            logger.error(f"LS checkout creation failed: {response.text}")
-            raise HTTPException(
-                status_code=500, detail="Failed to create checkout session"
-            )
-        data = response.json()
-        return data["data"]["attributes"]["url"]
+
+    if user_email:
+        params["checkout[email]"] = user_email
+
+    if LS_STORE_ID:
+        params["checkout[affiliate]"] = str(LS_STORE_ID)
+
+    query_string = urllib.parse.urlencode(params)
+    final_url = f"{checkout_url}?{query_string}"
+
+    logger.info(f"Generated LS checkout URL: {final_url}")
+    return final_url
 
 
 async def create_lemon_squeezy_portal(customer_id: str, return_url: str) -> str:
@@ -308,40 +297,30 @@ async def create_checkout_session(
     session: Session = Depends(get_session),
 ):
     """
-    Create a Lemon Squeezy checkout session or redirect to portal for existing subscribers.
-    Hybrid logic:
-    - New user -> Create checkout session
-    - Active subscriber on same tier -> Show error (cannot buy same tier twice)
-    - Active subscriber on different tier -> Redirect to customer portal (upgrade/downgrade)
-    - Past due/cancelled -> Create checkout (pre-filled email)
+    Create a Lemon Squeezy checkout session.
     """
     user_id = token_payload.decoded.get("sub")
     user_email = token_payload.decoded.get("email")
 
-    if not LS_API_KEY or not LS_STORE_ID:
-        logger.error("Lemon Squeezy API configuration missing")
+    if not LS_API_KEY:
         raise HTTPException(status_code=500, detail="Payment service misconfigured")
 
     if request.variant_id not in VALID_VARIANT_IDS:
         raise HTTPException(status_code=400, detail="Invalid variant_id")
 
     sub = session.get(UserSubscription, user_id)
+    is_explorer = sub and sub.variant_id == ""
 
-    if sub and sub.status == "active":
-        # Check if user is trying to buy the same tier
+    if sub and sub.status == "active" and not is_explorer:
         if sub.variant_id == request.variant_id:
             raise HTTPException(
                 status_code=400,
-                detail=f"You are already on the {PLAN_NAMES.get(sub.variant_id, 'current')} plan. Please upgrade or downgrade through the billing portal.",
+                detail=f"You are already on the {PLAN_NAMES.get(sub.variant_id, 'current')} plan.",
             )
-
-        # Different tier - redirect to portal for upgrade/downgrade
-        if sub.customer_id:
+        if sub.customer_id and not sub.customer_id.startswith("explorer_"):
             return_url = os.getenv("FRONTEND_URL", "http://localhost:5173") + "/billing"
             portal_url = await create_lemon_squeezy_portal(sub.customer_id, return_url)
             return {"redirect_to": portal_url, "reason": "upgrade_downgrade"}
-        else:
-            logger.warning(f"Active sub missing customer_id for user {user_id}")
 
     checkout_url = await create_lemon_squeezy_checkout(
         variant_id=request.variant_id,

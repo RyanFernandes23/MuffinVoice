@@ -5,6 +5,7 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
+import { Toaster, toast } from 'react-hot-toast';
 import { useAuth, useClerk } from '@clerk/nextjs';
 
 export default function DashboardPage() {
@@ -72,6 +73,10 @@ export default function DashboardPage() {
             const newStatus = data.status;
 
             if (newStatus !== notebook.status) {
+              if (newStatus === 'failed' && data.error) {
+                toast.error(data.error);
+                return null;
+              }
               return { ...notebook, status: newStatus };
             }
           } catch (error) {
@@ -81,8 +86,8 @@ export default function DashboardPage() {
         return notebook;
       });
 
-      const updatedNotebooks = await Promise.all(statusUpdates);
-      
+      const updatedNotebooks = (await Promise.all(statusUpdates)).filter(Boolean);
+
       if (JSON.stringify(updatedNotebooks) !== JSON.stringify(notebooks)) {
         setNotebooks(updatedNotebooks);
       }

@@ -24,9 +24,9 @@ EXPLORER_VARIANT_ID = ""  # Empty string for free users
 SUBSCRIPTION_LIMITS = {
     CREATOR_VARIANT_ID: 250000,
     PROFESSIONAL_VARIANT_ID: 1000000,
-    EXPLORER_VARIANT_ID: 15000,
+    EXPLORER_VARIANT_ID: 500,
 }
-DEFAULT_LIMIT = 15000  # Free/Explorer plan limit
+DEFAULT_LIMIT = 500  # Free/Explorer plan limit
 
 load_dotenv()
 
@@ -209,7 +209,13 @@ def process_file_task(user_id, job_id, file_path, voice):
                     f"No subscription found for user {user_id}. Creating Explorer subscription."
                 )
                 sub = get_or_create_explorer_subscription(user_id)
-                sub = session.get(UserSubscription, user_id)
+                session.flush()
+                session.refresh(sub)
+
+            if not sub:
+                raise ValueError(
+                    f"Failed to get or create Explorer subscription for user {user_id}"
+                )
 
             limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
             monthly_char_used = sub.monthly_char_used
@@ -231,7 +237,7 @@ def process_file_task(user_id, job_id, file_path, voice):
 
             # Character Limit Check
             if monthly_char_used + file_char_length > limit:
-                # Remove the file that was just uploaded
+                del full_text
                 if os.path.exists(file_path):
                     os.remove(file_path)
 

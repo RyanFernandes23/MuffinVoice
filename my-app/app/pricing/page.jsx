@@ -5,6 +5,9 @@ import { Check, X } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 import { usePlan } from '../hooks/usePlan';
 
+console.log("NEXT_PUBLIC_LEMON_SQUEEZY_CREATOR_VARIANT_ID:", process.env.NEXT_PUBLIC_LEMON_SQUEEZY_CREATOR_VARIANT_ID);
+console.log("NEXT_PUBLIC_LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID:", process.env.NEXT_PUBLIC_LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID);
+
 export default function PricingPage() {
   const { isSignedIn, getToken } = useAuth();
   const { planData, loading: planLoading } = usePlan();
@@ -59,6 +62,8 @@ export default function PricingPage() {
   ];
 
   const handleSubscribe = async (variantId) => {
+    console.log("Subscribe clicked, variantId:", variantId);
+    
     if (!isSignedIn) {
       window.location.href = '/sign-in';
       return;
@@ -67,6 +72,7 @@ export default function PricingPage() {
     setCheckoutLoading(variantId);
     try {
       const token = await getToken();
+      console.log("Sending checkout request for variant:", variantId);
       const response = await fetch('http://localhost:8000/api/subscription/checkout', {
         method: 'POST',
         headers: {
@@ -77,9 +83,13 @@ export default function PricingPage() {
       });
 
       const data = await response.json();
+      console.log("Checkout response:", response.status, data);
 
       if (!response.ok) {
-        alert(data.detail || 'Failed to create checkout session');
+        const errorMessage = typeof data.detail === 'string' 
+          ? data.detail 
+          : JSON.stringify(data.detail) || 'Failed to create checkout session';
+        alert(errorMessage);
         return;
       }
 
@@ -187,7 +197,7 @@ return (
                       : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800'
                   } ${isButtonDisabled(index) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {checkoutLoading === tier.variantId ? 'Loading...' : getButtonText(tier, index)}
+                  {checkoutLoading === tier.variantId && tier.variantId ? 'Loading...' : getButtonText(tier, index)}
                 </button>
 
                 {/* Features */}
