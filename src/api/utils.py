@@ -19,12 +19,14 @@ from dotenv import load_dotenv
 # Subscription Character Limits
 CREATOR_VARIANT_ID = os.getenv("LEMON_SQUEEZY_CREATOR_VARIANT_ID", "")
 PROFESSIONAL_VARIANT_ID = os.getenv("LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID", "")
+EXPLORER_VARIANT_ID = ""  # Empty string for free users
 
 SUBSCRIPTION_LIMITS = {
     CREATOR_VARIANT_ID: 250000,
     PROFESSIONAL_VARIANT_ID: 1000000,
+    EXPLORER_VARIANT_ID: 15000,
 }
-DEFAULT_LIMIT = 5000  # Free/Explorer plan limit
+DEFAULT_LIMIT = 15000  # Free/Explorer plan limit
 
 load_dotenv()
 
@@ -149,6 +151,38 @@ def increment_user_usage(user_id: str, char_length: int):
         logger.error(f"Failed to increment user usage for {user_id}: {e}")
 
 
+def get_or_create_explorer_subscription(user_id: str) -> UserSubscription:
+    """
+    Gets existing subscription or creates an Explorer (free) subscription for the user.
+    Called on first file processing to ensure free users have usage tracking.
+    """
+    try:
+        with Session(engine) as session:
+            sub = session.get(UserSubscription, user_id)
+
+            if sub:
+                return sub
+
+            new_sub = UserSubscription(
+                user_id=user_id,
+                customer_id=f"explorer_{user_id}",
+                subscription_id=f"explorer_{user_id}",
+                variant_id=EXPLORER_VARIANT_ID,
+                status="active",
+                current_period_end=None,
+                monthly_char_used=0,
+                last_usage_reset_at=datetime.now(timezone.utc),
+            )
+            session.add(new_sub)
+            session.commit()
+            logger.info(f"Created Explorer subscription for free user {user_id}")
+            return new_sub
+
+    except Exception as e:
+        logger.error(f"Failed to create Explorer subscription for user {user_id}: {e}")
+        raise
+
+
 def process_file_task(user_id, job_id, file_path, voice):
     # Update status to processing in Redis AND DB
     set_job_status(job_id, "processing")
@@ -170,13 +204,18 @@ def process_file_task(user_id, job_id, file_path, voice):
         with Session(engine) as session:
             sub = session.get(UserSubscription, user_id)
 
-            limit = DEFAULT_LIMIT
-            monthly_char_used = 0
+            if not sub:
+                logger.info(
+                    f"No subscription found for user {user_id}. Creating Explorer subscription."
+                )
+                sub = get_or_create_explorer_subscription(user_id)
+                sub = session.get(UserSubscription, user_id)
 
-            if sub:
-                # Check and Reset Usage if the billing period has ended (defensive check)
+            limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
+            monthly_char_used = sub.monthly_char_used
+
+            if sub.variant_id != EXPLORER_VARIANT_ID:
                 now = datetime.now(timezone.utc)
-                # We reset if current_period_end is passed AND we haven't reset since that date.
                 if (
                     sub.current_period_end
                     and now > sub.current_period_end
@@ -189,14 +228,6 @@ def process_file_task(user_id, job_id, file_path, voice):
                     logger.info(
                         f"User {user_id} character limit reset due to expired billing cycle (defensive check)."
                     )
-
-                # Get the limit based on their plan
-                limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
-                monthly_char_used = sub.monthly_char_used
-            else:
-                logger.warning(
-                    f"No subscription record found for user {user_id}. Applying default limit of {limit}."
-                )
 
             # Character Limit Check
             if monthly_char_used + file_char_length > limit:

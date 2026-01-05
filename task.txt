@@ -94,6 +94,12 @@ ERR_NGROK_3200
 14. typing text support.
 15. ocr support.
 
+ngrok config:
+-- localhost 8000 at raytech expose
+  -- use this exposed ngrok url in frontend
+
+-- same with tts
+
 
 
 

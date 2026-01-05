@@ -32,6 +32,7 @@ VALID_VARIANT_IDS = {LS_CREATOR_VARIANT_ID, LS_PROFESSIONAL_VARIANT_ID}
 PLAN_NAMES = {
     LS_CREATOR_VARIANT_ID: "Creator",
     LS_PROFESSIONAL_VARIANT_ID: "Professional",
+    "": "Explorer",
 }
 
 
@@ -108,7 +109,9 @@ def check_user_access(user_id: str, session: Session):
     if not sub:
         return False  # No subscription ever
 
-    # LOGIC: Allow if active OR (cancelled but still in paid period)
+    if sub.variant_id == "":
+        return True  # Explorer users always have access
+
     is_active = sub.status == "active"
     is_grace_period = (
         sub.status == "cancelled"

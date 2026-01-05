@@ -52,3 +52,6 @@ adding token usage in for the user for that month and showing plan that he curre
     - A user cannot buy a same tier twice.
     
     - we will provide a new way to by perks options( this is for later)
+
+explorer plan:
+    - 
