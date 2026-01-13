@@ -18,7 +18,6 @@ import os
 
 from src.api.deps import (
     clerk_auth,
-    s3,
     AVAILABLE_VOICES,
     MAX_FILE_SIZE,
     logger,
@@ -33,7 +32,7 @@ from src.api.utils import (
     get_session,
     process_file_task,
 )
-from src.TTS_Workers.tasks import process_speeches
+from src.TTS_Workers.tasks import process_speeches, get_s3_client
 from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(tags=["notebooks", "tts", "s3"])
@@ -147,6 +146,7 @@ async def delete_notebook(
     logger.info(f"Deleted {len(notes_to_delete)} notes for job {job_id}.")
 
     # 2. Delete files from S3
+    s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}/"
     try:
         response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
@@ -193,6 +193,7 @@ async def serve_manifest(
 
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}/manifest.m3u8"
 
+    s3 = get_s3_client()
     try:
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
@@ -224,6 +225,7 @@ async def serve_speech(
         )
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}/{speech_index}"
 
+    s3 = get_s3_client()
     try:
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
@@ -262,6 +264,7 @@ async def serve_subtitles(user_id: str, job_id: str, token_payload=Depends(clerk
 
     s3_prefix = f"{user_id}/{job_id}/subtitles.json"
 
+    s3 = get_s3_client()
     try:
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
@@ -286,6 +289,7 @@ async def serve_chunk(user_id: str, job_id: str, token_payload=Depends(clerk_aut
         )
 
     s3_prefix = f"{user_id}/{job_id}/chunks_c1.json"
+    s3 = get_s3_client()
     try:
         obj = s3.get_object(Bucket="ttsfiles", Key=s3_prefix)
         content = obj["Body"].read()
@@ -328,6 +332,7 @@ async def check_voice_status(
         )
         s3_voices_prefix = f"{user_id}/{job_id}/voices/"
 
+        s3 = get_s3_client()
         # List all objects under the voices prefix
         response = s3.list_objects_v2(
             Bucket="ttsfiles", Prefix=s3_voices_prefix, Delimiter="/"
@@ -414,6 +419,7 @@ async def process_voice(
 
         # Check if voice already exists in S3
         s3_voice_prefix = f"{user_id}/{job_id}/voices/{voice}/"
+        s3 = get_s3_client()
         response = s3.list_objects_v2(
             Bucket="ttsfiles", Prefix=s3_voice_prefix, MaxKeys=1
         )

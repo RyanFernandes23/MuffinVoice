@@ -3,6 +3,7 @@ import logging
 import os
 from typing import List
 
+import razorpay
 from fastapi import Depends, HTTPException
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from sqlmodel import Session, select
@@ -34,30 +35,40 @@ if not jwks_url:
 clerk_config = ClerkConfig(jwks_url=jwks_url)
 clerk_auth = ClerkHTTPBearer(config=clerk_config)
 
-s3 = get_s3_client()
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+if not RAZORPAY_KEY_ID:
+    logger.warning("RAZORPAY_KEY_ID environment variable is not set")
 
-LS_SIGNING_SECRET = os.getenv("LS_SIGNING_SECRET")
-if not LS_SIGNING_SECRET:
-    logger.warning("LS_SIGNING_SECRET environment variable is not set")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+if not RAZORPAY_KEY_SECRET:
+    logger.warning("RAZORPAY_KEY_SECRET environment variable is not set")
 
-LS_API_KEY = os.getenv("LEMON_SQUEEZY_API_KEY")
-if not LS_API_KEY:
-    logger.warning("LEMON_SQUEEZY_API_KEY environment variable is not set")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
+if not RAZORPAY_WEBHOOK_SECRET:
+    logger.warning("RAZORPAY_WEBHOOK_SECRET environment variable is not set")
 
-LS_API_URL = os.getenv("LEMON_SQUEEZY_API_URL", "https://api.lemonsqueezy.com/v1")
-LS_STORE_ID = os.getenv("LEMON_SQUEEZY_STORE_ID")
-if not LS_STORE_ID:
-    logger.warning("LEMON_SQUEEZY_STORE_ID environment variable is not set")
+RAZORPAY_CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID")
+if not RAZORPAY_CREATOR_PLAN_ID:
+    logger.warning("RAZORPAY_CREATOR_PLAN_ID environment variable is not set")
 
-LS_CREATOR_VARIANT_ID = os.getenv("LEMON_SQUEEZY_CREATOR_VARIANT_ID")
-if not LS_CREATOR_VARIANT_ID:
-    logger.warning("LEMON_SQUEEZY_CREATOR_VARIANT_ID environment variable is not set")
+RAZORPAY_PROFESSIONAL_PLAN_ID = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID")
+if not RAZORPAY_PROFESSIONAL_PLAN_ID:
+    logger.warning("RAZORPAY_PROFESSIONAL_PLAN_ID environment variable is not set")
 
-LS_PROFESSIONAL_VARIANT_ID = os.getenv("LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID")
-if not LS_PROFESSIONAL_VARIANT_ID:
-    logger.warning(
-        "LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID environment variable is not set"
-    )
+RAZORPAY_CREATOR_SUB_ID = os.getenv("RAZORPAY_CREATOR_SUB_ID")
+if not RAZORPAY_CREATOR_SUB_ID:
+    logger.warning("RAZORPAY_CREATOR_SUB_ID environment variable is not set")
+
+RAZORPAY_PROFESSIONAL_SUB_ID = os.getenv("RAZORPAY_PROFESSIONAL_SUB_ID")
+if not RAZORPAY_PROFESSIONAL_SUB_ID:
+    logger.warning("RAZORPAY_PROFESSIONAL_SUB_ID environment variable is not set")
+
+razorpay_client = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    logger.info("Razorpay client initialized successfully")
+else:
+    logger.warning("Razorpay client not initialized - missing credentials")
 
 
 async def get_current_user(token_payload=Depends(clerk_auth)) -> str:

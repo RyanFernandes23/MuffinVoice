@@ -1,330 +1,371 @@
 # src/api/routers/subscription.py
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
-import os, hmac, hashlib, httpx, urllib.parse
 from datetime import datetime, timezone
+import hmac
+import hashlib
+
 from src.api.utils import get_session, engine
-from src.api.schema import UserSubscription
+from src.api.schema import UserSubscription, SubscriptionEvent
 from src.api.deps import (
     clerk_auth,
     logger,
-    LS_SIGNING_SECRET,
-    LS_API_KEY,
-    LS_API_URL,
-    LS_STORE_ID,
-    LS_CREATOR_VARIANT_ID,
-    LS_PROFESSIONAL_VARIANT_ID,
+    razorpay_client,
+    RAZORPAY_KEY_ID,
+    RAZORPAY_WEBHOOK_SECRET,
+    RAZORPAY_CREATOR_PLAN_ID,
+    RAZORPAY_PROFESSIONAL_PLAN_ID,
 )
-
 
 subscription_router = APIRouter(
-    prefix="/api/subscription", tags=["subscription", "webhook"]
+    prefix="/api/subscription",
+    tags=["subscription"]
 )
 
+# ------------------------------------------------------------------
+# CONSTANTS
+# ------------------------------------------------------------------
 
-class CheckoutRequest(BaseModel):
-    variant_id: str
-
-
-VALID_VARIANT_IDS = {str(LS_CREATOR_VARIANT_ID), str(LS_PROFESSIONAL_VARIANT_ID)}
-
-PLAN_NAMES = {
-    LS_CREATOR_VARIANT_ID: "Creator",
-    LS_PROFESSIONAL_VARIANT_ID: "Professional",
-    "": "Explorer",
+PLAN_IDS = {
+    "creator": RAZORPAY_CREATOR_PLAN_ID,
+    "professional": RAZORPAY_PROFESSIONAL_PLAN_ID,
 }
 
+PLAN_NAMES = {
+    "explorer": "Explorer",
+    "creator": "Creator",
+    "professional": "Professional",
+}
 
-async def create_lemon_squeezy_checkout(
-    variant_id: str, user_id: str, user_email: str
-) -> str:
+PLAN_ORDER = {
+    "explorer": 0,
+    "creator": 1,
+    "professional": 2,
+}
+
+ALLOWED_WEBHOOK_EVENTS = {
+    "subscription.activated",
+    "subscription.charged",
+    "subscription.completed",
+    "subscription.halted",
+    "subscription.cancelled",
+}
+
+# ------------------------------------------------------------------
+# SCHEMAS
+# ------------------------------------------------------------------
+
+class CheckoutRequest(BaseModel):
+    plan_id: str  # creator | professional
+
+class VerificationRequest(BaseModel):
+    razorpay_payment_id: str
+    razorpay_subscription_id: str
+    razorpay_signature: str
+
+# ------------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------------
+
+def can_upgrade(current: str, target: str) -> bool:
+    return PLAN_ORDER.get(current, 0) < PLAN_ORDER.get(target, 0)
+
+def ts_to_dt(ts: int | None):
+    if not ts:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+def cancel_subscription_safely(subscription_id: str):
     """
-    Generate a Lemon Squeezy checkout URL directly.
-    This approach avoids API call issues and is more reliable.
+    Cancel subscription without throwing error if already cancelled
     """
-    checkout_url = f"https://store.lemonsqueezy.com/checkout/buy/{variant_id}"
-
-    params = {
-        "checkout[custom][user_id]": user_id,
-    }
-
-    if user_email:
-        params["checkout[email]"] = user_email
-
-    if LS_STORE_ID:
-        params["checkout[affiliate]"] = str(LS_STORE_ID)
-
-    query_string = urllib.parse.urlencode(params)
-    final_url = f"{checkout_url}?{query_string}"
-
-    logger.info(f"Generated LS checkout URL: {final_url}")
-    return final_url
-
-
-async def create_lemon_squeezy_portal(customer_id: str, return_url: str) -> str:
-    portal_url = f"{LS_API_URL}/customers/{customer_id}/portal"
-    payload = {
-        "data": {
-            "type": "portal-sessions",
-            "attributes": {
-                "return_url": return_url,
-            },
-        }
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            portal_url,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {LS_API_KEY}",
-                "Accept": "application/vnd.api+json",
-                "Content-Type": "application/vnd.api+json",
-            },
-            timeout=30.0,
+    if not subscription_id:
+        return
+    try:
+        # Check status first or just attempt cancel
+        razorpay_client.subscription.cancel(
+            subscription_id,
+            {"cancel_at_cycle_end": False}
         )
-        if response.status_code != 200:
-            logger.error(f"LS portal creation failed: {response.text}")
-            raise HTTPException(
-                status_code=500, detail="Failed to create portal session"
-            )
-        data = response.json()
-        return data["data"]["attributes"]["url"]
+        logger.info(f"Successfully cancelled old subscription: {subscription_id}")
+    except Exception as e:
+        logger.warning(f"Attempted to cancel {subscription_id} but failed (might be already cancelled): {e}")
 
+def create_new_subscription(
+    *,
+    user_id: str,
+    plan_id: str,
+    customer_id: str | None,
+    prev_sub_id: str | None = None
+):
+    """
+    Create a fresh Razorpay subscription.
+    """
+    notes = {
+        "user_id": user_id,
+        "plan_id": plan_id,
+    }
+    
+    # Store previous sub ID in notes so webhook knows what to cancel
+    # when this new one activates
+    if prev_sub_id:
+        notes["previous_subscription_id"] = prev_sub_id
 
-def check_user_access(user_id: str, session: Session):
+    payload = {
+        "plan_id": PLAN_IDS[plan_id],
+        "total_count": 120,  # infinite subscription
+        "customer_notify": 1,
+        "notes": notes,
+    }
+
+    if customer_id:
+        payload["customer_id"] = customer_id
+
+    try:
+        sub = razorpay_client.subscription.create(payload)
+        return {
+            "subscription_id": sub["id"],
+            "razorpay_key_id": RAZORPAY_KEY_ID,
+        }
+    except Exception as e:
+        logger.error(f"Razorpay subscription creation failed: {e}")
+        raise HTTPException(status_code=500, detail="Subscription creation failed")
+
+# ------------------------------------------------------------------
+# CHECKOUT (NEW + UPGRADE)
+# ------------------------------------------------------------------
+
+@subscription_router.post("/checkout")
+async def checkout(
+    request: CheckoutRequest,
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
+):
+    user_id = token_payload.decoded.get("sub")
+    plan_id = request.plan_id
+
+    if plan_id not in PLAN_IDS:
+        raise HTTPException(status_code=400, detail="Invalid plan_id")
+
     sub = session.get(UserSubscription, user_id)
 
-    if not sub:
-        return False  # No subscription ever
+    # --------------------------------------------------------------
+    # UPGRADE FLOW
+    # --------------------------------------------------------------
+    if sub and sub.plan_id != "explorer" and sub.status == "active":
+        if sub.plan_id == plan_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Already on {PLAN_NAMES[plan_id]} plan",
+            )
 
-    if sub.variant_id == "":
-        return True  # Explorer users always have access
+        if not can_upgrade(sub.plan_id, plan_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Downgrades are not supported",
+            )
+            
+        # SAFETY FIX: Do NOT cancel existing subscription here. 
+        # Only cancel it once the new one is confirmed active via webhook/verify.
+        # We pass the old ID to the new subscription notes.
+        return create_new_subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            customer_id=sub.customer_id,
+            prev_sub_id=sub.subscription_id 
+        )
 
-    is_active = sub.status == "active"
-    is_grace_period = (
-        sub.status == "cancelled"
-        and sub.current_period_end
-        and sub.current_period_end > datetime.now(timezone.utc)
+    # --------------------------------------------------------------
+    # NEW SUBSCRIPTION FLOW
+    # --------------------------------------------------------------
+    customer_id = sub.customer_id if sub else None
+
+    return create_new_subscription(
+        user_id=user_id,
+        plan_id=plan_id,
+        customer_id=customer_id,
     )
 
-    if is_active or is_grace_period:
-        return True
+# ------------------------------------------------------------------
+# VERIFY (NEW ENDPOINT)
+# ------------------------------------------------------------------
 
-    return False
+@subscription_router.post("/verify")
+async def verify_payment(
+    request: VerificationRequest,
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
+):
+    """
+    Verifies the payment signature generated by Razorpay.
+    This acts as an immediate confirmation for the frontend before the webhook arrives.
+    """
+    user_id = token_payload.decoded.get("sub")
+    
+    # 1. Verify Signature
+    try:
+        data = f"{request.razorpay_payment_id}|{request.razorpay_subscription_id}"
+        generated_signature = hmac.new(
+            RAZORPAY_WEBHOOK_SECRET.encode(), # Or Key Secret? For checkout it's Key Secret usually
+            data.encode(), 
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Razorpay client utility is safer
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_payment_id': request.razorpay_payment_id,
+            'razorpay_subscription_id': request.razorpay_subscription_id,
+            'razorpay_signature': request.razorpay_signature
+        })
+    except Exception as e:
+        logger.error(f"Signature verification failed: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
 
+    # 2. Update Database (Optimistic Update)
+    # The webhook will eventually reconcile this, but we update now for UX speed
+    sub = session.get(UserSubscription, user_id)
+    if not sub:
+        sub = UserSubscription(user_id=user_id)
+        
+    # Check if we need to cancel an OLD subscription that is different from this new one
+    if sub.subscription_id and sub.subscription_id != request.razorpay_subscription_id:
+        cancel_subscription_safely(sub.subscription_id)
+
+    # Fetch fresh details from Razorpay to get accurate plan/dates
+    try:
+        rzp_sub = razorpay_client.subscription.fetch(request.razorpay_subscription_id)
+        
+        # Update local DB
+        sub.subscription_id = rzp_sub['id']
+        sub.customer_id = rzp_sub.get('customer_id')
+        sub.status = rzp_sub['status']
+        sub.plan_id = rzp_sub['notes'].get('plan_id', 'creator') # Fallback if notes missing
+        sub.current_period_start = ts_to_dt(rzp_sub.get('current_start'))
+        sub.current_period_end = ts_to_dt(rzp_sub.get('current_end'))
+        sub.monthly_char_used = 0 # Reset usage on new sub
+        
+        session.add(sub)
+        session.commit()
+        
+        return {"success": True, "status": sub.status}
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch subscription details: {e}")
+        # Even if fetch fails, signature was valid, so return success
+        return {"success": True, "warning": "Signature valid but sync failed"}
+
+# ------------------------------------------------------------------
+# WEBHOOK
+# ------------------------------------------------------------------
 
 @subscription_router.post("/webhook")
-async def lemonsqueezy_webhook(request: Request):
-    # 1. Verify Signature
-    signature = request.headers.get("X-Signature")
+async def razorpay_webhook(request: Request):
     raw_body = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature")
 
-    if not LS_SIGNING_SECRET:
-        logger.error("LS_SIGNING_SECRET not configured")
-        raise HTTPException(status_code=500, detail="Webhook configuration error")
-
-    expected_signature = hmac.new(
-        LS_SIGNING_SECRET.encode(), raw_body, hashlib.sha256
-    ).hexdigest()
-
-    if not signature or not hmac.compare_digest(signature, expected_signature):
+    try:
+        razorpay_client.utility.verify_webhook_signature(
+            raw_body.decode(),
+            signature,
+            RAZORPAY_WEBHOOK_SECRET,
+        )
+    except Exception:
         raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # 2. Process Event
     payload = await request.json()
-    event_name = payload["meta"]["event_name"]
+    event_type = payload.get("event")
 
-    if event_name in [
-        "subscription_created",
-        "subscription_updated",
-        "subscription_cancelled",
-        "subscription_expired",
-    ]:
-        # 1. Extract data safely
-        data = payload["data"]["attributes"]
-        user_id = payload["meta"]["custom_data"].get("user_id")  # passed from checkout
-        if not user_id:
-            logger.error(f"Webhook {event_name} missing user_id in custom_data")
-            return {"status": "error", "message": "user_id missing"}
+    if event_type not in ALLOWED_WEBHOOK_EVENTS:
+        return {"status": "ignored"}
 
-        sub_id = payload["data"]["id"]
-        customer_id = data["customer_id"]
-        variant_id = str(data["variant_id"])
-        status = data["status"]
+    entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+    notes = entity.get("notes", {})
 
-        # Convert ISO string to datetime
-        ends_at_str = data["ends_at"]
-        ends_at = datetime.fromisoformat(ends_at_str) if ends_at_str else None
+    user_id = notes.get("user_id")
+    plan_id = notes.get("plan_id")
+    prev_sub_id = notes.get("previous_subscription_id")
 
-        # 2. Database Operation
-        with Session(engine) as session:
-            # Check if record exists
-            sub = session.get(UserSubscription, user_id)
+    if not user_id:
+        logger.error(f"Webhook ignored: missing user_id")
+        return {"status": "ignored"}
 
-            if not sub:
-                sub = UserSubscription(
-                    user_id=user_id,
-                    subscription_id=sub_id,
-                    customer_id=customer_id,
-                    variant_id=variant_id,
-                    status=status,
-                    current_period_end=ends_at,
-                )
-            else:
-                # Check if plan is changing (upgrade/downgrade)
-                # Reset usage count when upgrading or changing plans
-                plan_changed = sub.variant_id != variant_id
+    with Session(engine) as session:
+        sub = session.get(UserSubscription, user_id)
+        if not sub:
+            sub = UserSubscription(user_id=user_id)
 
-                # Update fields
-                sub.subscription_id = sub_id
-                sub.customer_id = customer_id
-                sub.variant_id = variant_id
-                sub.status = status
-                sub.current_period_end = ends_at
-                sub.updated_at = datetime.now(timezone.utc)
+        # ----------------------------------------------------------
+        # SAFETY FIX: Handle Upgrade Cleanups
+        # ----------------------------------------------------------
+        # If this event is "subscription.activated", it means payment succeeded.
+        # Check if there is an OLD subscription (prev_sub_id) and cancel it now.
+        if event_type == "subscription.activated" and prev_sub_id:
+            # Verify we aren't cancelling the one we just bought
+            if prev_sub_id != entity.get("id"):
+                cancel_subscription_safely(prev_sub_id)
 
-                # Reset usage count when plan changes to creator or professional
-                if plan_changed and variant_id in VALID_VARIANT_IDS:
-                    sub.monthly_char_used = 0
-                    sub.last_usage_reset_at = datetime.now(timezone.utc)
-                    logger.info(
-                        f"Usage count reset for user {user_id} due to plan change to {PLAN_NAMES.get(variant_id, 'Unknown')}"
-                    )
+        # Also generic check: if DB has a DIFFERENT active sub ID, cancel it
+        if event_type == "subscription.activated" and sub.subscription_id and sub.subscription_id != entity.get("id"):
+             cancel_subscription_safely(sub.subscription_id)
 
-            session.add(sub)
-            session.commit()
+        # Update DB
+        sub.subscription_id = entity.get("id")
+        sub.customer_id = entity.get("customer_id")
+        sub.status = entity.get("status")
+        sub.plan_id = plan_id or sub.plan_id
+        sub.current_period_start = ts_to_dt(entity.get("current_start"))
+        sub.current_period_end = ts_to_dt(entity.get("current_end"))
 
-            logger.info(f"Subscription {event_name} processed for user {user_id}")
+        if event_type == "subscription.activated":
+            sub.monthly_char_used = 0
 
-    return {"status": "processed"}
+        session.add(sub)
 
-
-@subscription_router.get("/usage")
-async def get_usage(
-    token_payload=Depends(clerk_auth), session: Session = Depends(get_session)
-):
-    """
-    Retrieves the user's current character usage against their monthly limit,
-    along with their current plan information.
-    """
-    from src.api.utils import (
-        SUBSCRIPTION_LIMITS,
-        DEFAULT_LIMIT,
-    )  # Need to import limits
-
-    user_id = token_payload.decoded.get("sub")
-    sub = session.get(UserSubscription, user_id)
-
-    limit = DEFAULT_LIMIT
-    monthly_char_used = 0
-    current_period_end = None
-    plan_name = "Explorer"
-    plan_variant_id = None
-
-    if sub:
-        plan_variant_id = sub.variant_id
-        plan_name = PLAN_NAMES.get(sub.variant_id, "Explorer")
-        limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
-        monthly_char_used = sub.monthly_char_used
-        current_period_end = (
-            sub.current_period_end.isoformat() if sub.current_period_end else None
+        session.add(
+            SubscriptionEvent(
+                user_id=user_id,
+                subscription_id=sub.subscription_id,
+                event_type=event_type,
+                event_data=payload,
+            )
         )
 
-    return {
-        "user_id": user_id,
-        "monthly_char_used": monthly_char_used,
-        "monthly_char_limit": limit,
-        "current_period_end": current_period_end,
-        "plan_name": plan_name,
-        "plan_variant_id": plan_variant_id,
-    }
+        session.commit()
 
+    return {"status": "success"}
 
-@subscription_router.get("/plan")
-async def get_plan(
-    token_payload=Depends(clerk_auth), session: Session = Depends(get_session)
+# ------------------------------------------------------------------
+# STATUS
+# ------------------------------------------------------------------
+
+@subscription_router.get("/status")
+async def get_status(
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
 ):
-    """
-    Retrieves the user's current plan information.
-    """
+    from src.api.utils import SUBSCRIPTION_LIMITS, DEFAULT_LIMIT
+
     user_id = token_payload.decoded.get("sub")
     sub = session.get(UserSubscription, user_id)
 
     if not sub:
         return {
-            "user_id": user_id,
+            "plan_id": "explorer",
             "plan_name": "Explorer",
-            "plan_variant_id": None,
             "status": "free",
+            "monthly_char_limit": DEFAULT_LIMIT,
+            "monthly_char_used": 0,
         }
 
     return {
-        "user_id": user_id,
-        "plan_name": PLAN_NAMES.get(sub.variant_id, "Explorer"),
-        "plan_variant_id": sub.variant_id,
+        "plan_id": sub.plan_id,
+        "plan_name": PLAN_NAMES.get(sub.plan_id, "Explorer"),
         "status": sub.status,
+        "monthly_char_limit": SUBSCRIPTION_LIMITS.get(sub.plan_id, DEFAULT_LIMIT),
+        "monthly_char_used": sub.monthly_char_used,
         "current_period_end": sub.current_period_end.isoformat()
         if sub.current_period_end
         else None,
     }
-
-
-@subscription_router.get("/portal-link")
-async def get_portal_link(
-    token_payload=Depends(clerk_auth), session: Session = Depends(get_session)
-):
-    """
-    Generates a secure link to the Lemon Squeezy customer portal.
-    """
-    user_id = token_payload.decoded.get("sub")
-    sub = session.get(UserSubscription, user_id)
-
-    if not sub or not sub.customer_id:
-        raise HTTPException(
-            status_code=404, detail="Subscription not found or customer ID missing."
-        )
-
-    return_url = os.getenv("FRONTEND_URL", "http://localhost:5173") + "/billing"
-    portal_url = await create_lemon_squeezy_portal(sub.customer_id, return_url)
-    return {"portal_url": portal_url}
-
-
-@subscription_router.post("/checkout")
-async def create_checkout_session(
-    request: CheckoutRequest,
-    token_payload=Depends(clerk_auth),
-    session: Session = Depends(get_session),
-):
-    """
-    Create a Lemon Squeezy checkout session.
-    """
-    user_id = token_payload.decoded.get("sub")
-    user_email = token_payload.decoded.get("email")
-
-    if not LS_API_KEY:
-        raise HTTPException(status_code=500, detail="Payment service misconfigured")
-
-    if request.variant_id not in VALID_VARIANT_IDS:
-        raise HTTPException(status_code=400, detail="Invalid variant_id")
-
-    sub = session.get(UserSubscription, user_id)
-    is_explorer = sub and sub.variant_id == ""
-
-    if sub and sub.status == "active" and not is_explorer:
-        if sub.variant_id == request.variant_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"You are already on the {PLAN_NAMES.get(sub.variant_id, 'current')} plan.",
-            )
-        if sub.customer_id and not sub.customer_id.startswith("explorer_"):
-            return_url = os.getenv("FRONTEND_URL", "http://localhost:5173") + "/billing"
-            portal_url = await create_lemon_squeezy_portal(sub.customer_id, return_url)
-            return {"redirect_to": portal_url, "reason": "upgrade_downgrade"}
-
-    checkout_url = await create_lemon_squeezy_checkout(
-        variant_id=request.variant_id,
-        user_id=user_id,
-        user_email=user_email or "",
-    )
-    return {"checkout_url": checkout_url}

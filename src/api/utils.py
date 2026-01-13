@@ -17,15 +17,22 @@ from src.api.schema import Notebook, UserSubscription
 from dotenv import load_dotenv
 
 # Subscription Character Limits
-CREATOR_VARIANT_ID = os.getenv("LEMON_SQUEEZY_CREATOR_VARIANT_ID", "")
-PROFESSIONAL_VARIANT_ID = os.getenv("LEMON_SQUEEZY_PROFESSIONAL_VARIANT_ID", "")
-EXPLORER_VARIANT_ID = ""  # Empty string for free users
+CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID", "")
+PROFESSIONAL_PLAN_ID = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID", "")
+EXPLORER_PLAN_ID = "explorer"  # Free users
 
 SUBSCRIPTION_LIMITS = {
-    CREATOR_VARIANT_ID: 250000,
-    PROFESSIONAL_VARIANT_ID: 1000000,
-    EXPLORER_VARIANT_ID: 500,
+    CREATOR_PLAN_ID: 250000,
+    PROFESSIONAL_PLAN_ID: 1000000,
+    EXPLORER_PLAN_ID: 500,
 }
+
+PLAN_IDS_MAP = {
+    "creator": CREATOR_PLAN_ID,
+    "professional": PROFESSIONAL_PLAN_ID,
+    "explorer": EXPLORER_PLAN_ID,
+}
+
 DEFAULT_LIMIT = 500  # Free/Explorer plan limit
 
 load_dotenv()
@@ -139,7 +146,7 @@ def increment_user_usage(user_id: str, char_length: int):
                 session.add(sub)
                 session.commit()
                 # Fetch limit for logging
-                limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
+                limit = SUBSCRIPTION_LIMITS.get(sub.plan_id, DEFAULT_LIMIT)
                 logger.info(
                     f"User {user_id} usage successfully incremented. New total used: {sub.monthly_char_used}/{limit}"
                 )
@@ -163,15 +170,14 @@ def get_or_create_explorer_subscription(user_id: str) -> UserSubscription:
             if sub:
                 return sub
 
-            new_sub = UserSubscription(
-                user_id=user_id,
-                customer_id=f"explorer_{user_id}",
-                subscription_id=f"explorer_{user_id}",
-                variant_id=EXPLORER_VARIANT_ID,
-                status="active",
-                current_period_end=None,
-                monthly_char_used=0,
-                last_usage_reset_at=datetime.now(timezone.utc),
+            new_sub = UserSubscription.model_validate(
+                {
+                    "user_id": user_id,
+                    "customer_id": f"explorer_{user_id}",
+                    "subscription_id": f"explorer_{user_id}",
+                    "plan_id": EXPLORER_PLAN_ID,
+                    "status": "active",
+                }
             )
             session.add(new_sub)
             session.commit()
@@ -217,10 +223,10 @@ def process_file_task(user_id, job_id, file_path, voice):
                     f"Failed to get or create Explorer subscription for user {user_id}"
                 )
 
-            limit = SUBSCRIPTION_LIMITS.get(sub.variant_id, DEFAULT_LIMIT)
+            limit = SUBSCRIPTION_LIMITS.get(sub.plan_id, DEFAULT_LIMIT)
             monthly_char_used = sub.monthly_char_used
 
-            if sub.variant_id != EXPLORER_VARIANT_ID:
+            if sub.plan_id != EXPLORER_PLAN_ID:
                 now = datetime.now(timezone.utc)
                 if (
                     sub.current_period_end

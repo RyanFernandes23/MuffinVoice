@@ -2,6 +2,7 @@ from sqlmodel import SQLModel, Field, Session, create_engine, select
 from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
+from sqlalchemy import JSON
 
 
 class Notebook(SQLModel, table=True):
@@ -31,23 +32,39 @@ class Note(SQLModel, table=True):
 class UserSubscription(SQLModel, table=True):
     user_id: str = Field(primary_key=True)  # Links to Clerk ID
 
-    # Lemon Squeezy Identifiers
-    customer_id: str = Field(index=True)  # Used for API calls (portal, etc)
-    subscription_id: str = Field(index=True)  # Used to update/cancel
-    variant_id: str = Field(
-        index=True
-    )  # Which plan are they on? (explorer(free), creator, professional)
+    # Razorpay Identifiers
+    customer_id: Optional[str] = Field(default=None, index=True)
+    subscription_id: Optional[str] = Field(default=None, index=True)
+    plan_id: str = Field(
+        index=True, default="explorer"
+    )  # explorer, creator, professional
 
     # Status Tracking
-    status: str  # active, past_due, cancelled, expired, etc.
+    status: str = Field(default="active")  # active, past_due, cancelled, expired
+    current_period_start: Optional[datetime] = Field(default=None)
     current_period_end: Optional[datetime] = Field(
-        nullable=True
-    )  # When does access actully end?
+        default=None
+    )  # When does access actually end?
 
-    # Character Limits
+    # Usage Tracking
     monthly_char_used: int = Field(default=0)
     last_usage_reset_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
 
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Payment Retry
+    retry_payment_link_id: Optional[str] = Field(default=None)
+    failed_payment_count: int = Field(default=0)
+
+
+class SubscriptionEvent(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    subscription_id: str = Field(default=None, index=True)
+    event_type: str = Field(
+        default="unknown"
+    )  # created, upgraded, failed, expired, etc.
+    event_data: dict = Field(sa_type=JSON)  # Full event payload
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,28 +1,19 @@
 ## Error Type
-Build Error
+Console Error
 
 ## Error Message
-Parsing ecmascript source code failed
+Failed to fetch plan data
 
-## Build Output
-./app/components/UploadModal.jsx:130:1
-Parsing ecmascript source code failed
-  128 |     </div>
-  129 |   );
-> 130 |
-      | ^
 
-Expected '</', got '<eof>'
+    at usePlan.useCallback[fetchPlan] (app/hooks/usePlan.js:25:15)
 
-Import traces:
-  Client Component Browser:
-    ./app/components/UploadModal.jsx [Client Component Browser]
-    ./app/dashboard/page.jsx [Client Component Browser]
-    ./app/dashboard/page.jsx [Server Component]
-
-  Client Component SSR:
-    ./app/components/UploadModal.jsx [Client Component SSR]
-    ./app/dashboard/page.jsx [Client Component SSR]
-    ./app/dashboard/page.jsx [Server Component]
+## Code Frame
+  23 |
+  24 |       if (!response.ok) {
+> 25 |         throw new Error('Failed to fetch plan data');
+     |               ^
+  26 |       }
+  27 |
+  28 |       const data = await response.json();
 
 Next.js version: 16.0.1 (Turbopack)

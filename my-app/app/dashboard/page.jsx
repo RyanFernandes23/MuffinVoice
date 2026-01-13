@@ -1,16 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
 import { Toaster, toast } from 'react-hot-toast';
 import { useAuth, useClerk } from '@clerk/nextjs';
+import { useUsage } from '../hooks/useUsage';
 
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
   const { openSignIn } = useClerk();
+  const { refetch: refetchUsage } = useUsage();
+  const prevCompletedCount = useRef(0);
 
   const [notebooks, setNotebooks] = useState([]);
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
@@ -90,6 +93,11 @@ export default function DashboardPage() {
 
       if (JSON.stringify(updatedNotebooks) !== JSON.stringify(notebooks)) {
         setNotebooks(updatedNotebooks);
+        const currentCompletedCount = updatedNotebooks.filter(nb => nb.status === 'completed').length;
+        if (currentCompletedCount > prevCompletedCount.current) {
+          refetchUsage();
+        }
+        prevCompletedCount.current = currentCompletedCount;
       }
     };
 
@@ -114,6 +122,17 @@ export default function DashboardPage() {
       document.body.classList.remove('body-no-scroll');
     };
   }, [isSubtitleOpen]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentStatus = params.get('payment');
+
+    if (paymentStatus === 'success') {
+      toast.success('Payment successful! Your subscription has been activated.');
+      refetchUsage();
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [refetchUsage]);
 
 
   const handleNewNotebookClick = () => {
