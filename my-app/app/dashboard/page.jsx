@@ -1,302 +1,273 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import { useAuth, useClerk } from '@clerk/nextjs';
+import { toast } from 'react-hot-toast';
+
+// Components
 import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
-import { Toaster, toast } from 'react-hot-toast';
-import { useAuth, useClerk } from '@clerk/nextjs';
+import SubscriptionInfo from '../components/SubscriptionInfo';
+
+// Hooks
 import { useUsage } from '../hooks/useUsage';
+// import useDashboardData from './useDashboardData';
 
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
   const { openSignIn } = useClerk();
   const { refetch: refetchUsage } = useUsage();
-  const prevCompletedCount = useRef(0);
 
-  const [notebooks, setNotebooks] = useState([]);
-  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
-  const [currentPlayingNotebook, setCurrentPlayingNotebook] = useState(null);
+  const {
+    notebooks,
+    fetchNotebooks,
+    updateNotebookStatus,
+    deleteNotebookOptimistic,
+  } = useDashboardData({ getToken, userId });
+
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [subtitleData, setSubtitleData] = useState([]); 
+
+  // Player State
+  const [currentNotebook, setCurrentNotebook] = useState(null);
+  const [showPlayer, setShowPlayer] = useState(false);
   const [isSubtitleOpen, setIsSubtitleOpen] = useState(false);
+  const [subtitleData, setSubtitleData] = useState([]);
   const [playerTime, setPlayerTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [seekTime, setSeekTime] = useState(null);
 
+  const prevCompletedCount = useRef(0);
 
-  const fetchNotebooks = useCallback(async () => {
-    if (!isSignedIn) return;
-    try {
-      const token = await getToken();
-      const response = await fetch('http://localhost:8000/notebooks', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error('Failed to fetch notebooks');
-      }
-      const data = await response.json();
-      const formattedNotebooks = data.map(notebook => ({
-        ...notebook,
-        manifestUrl: `http://localhost:8000/stream/${notebook.user_id}/${notebook.job_id}/${notebook.voice}/manifest.m3u8`,
-        notesCount: 0 // Initialize with 0, will be updated
-      }));
-      setNotebooks(formattedNotebooks);
-    } catch (error) {
-      console.error("Error fetching notebooks:", error);
-    }
-  }, [isSignedIn, getToken]);
-
+  /* ----------------------------------------------
+     Fetch Notebooks on Mount
+  ------------------------------------------------*/
   useEffect(() => {
-    fetchNotebooks();
-  }, [fetchNotebooks]);
+    if (isSignedIn) fetchNotebooks();
+  }, [isSignedIn, fetchNotebooks]);
 
-  
+  /* ----------------------------------------------
+     Poll Active Notebook Status
+     Interval created ONCE (no runaway re-renders)
+  ------------------------------------------------*/
   useEffect(() => {
-    if (!userId || notebooks.length === 0) return;
+    if (!userId) return;
 
-    const fetchStatus = async () => {
-      const token = await getToken();
-      const statusUpdates = notebooks.map(async (notebook) => {
-        if (notebook.status !== 'completed' && notebook.job_id) {
-          try {
-            const response = await fetch(`http://localhost:8000/job_status/${notebook.job_id}`, {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            });
+    const poll = async () => {
+      const updated = await updateNotebookStatus();
 
-            if (!response.ok) return notebook;
+      const completed = updated.filter(n => n.status === 'completed').length;
 
-            const data = await response.json();
-            const newStatus = data.status;
-
-            if (newStatus !== notebook.status) {
-              if (newStatus === 'failed' && data.error) {
-                toast.error(data.error);
-                return null;
-              }
-              return { ...notebook, status: newStatus };
-            }
-          } catch (error) {
-            console.error('Error fetching job status:', error);
-          }
-        }
-        return notebook;
-      });
-
-      const updatedNotebooks = (await Promise.all(statusUpdates)).filter(Boolean);
-
-      if (JSON.stringify(updatedNotebooks) !== JSON.stringify(notebooks)) {
-        setNotebooks(updatedNotebooks);
-        const currentCompletedCount = updatedNotebooks.filter(nb => nb.status === 'completed').length;
-        if (currentCompletedCount > prevCompletedCount.current) {
-          refetchUsage();
-        }
-        prevCompletedCount.current = currentCompletedCount;
+      if (completed > prevCompletedCount.current) {
+        refetchUsage(); // Sync usage on new completion
       }
+      prevCompletedCount.current = completed;
     };
 
-    const interval = setInterval(() => {
-      const hasActiveJobs = notebooks.some(nb => nb.status !== 'completed');
-      if (hasActiveJobs) {
-        fetchStatus();
-      }
-    }, 5000);
-
+    const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
-  }, [notebooks, getToken, userId]);
+  }, [userId, updateNotebookStatus, refetchUsage]);
 
+  /* ----------------------------------------------
+     Subtitle Overlay Body Scroll Handling
+  ------------------------------------------------*/
   useEffect(() => {
-    if (isSubtitleOpen) {
-      document.body.classList.add('body-no-scroll');
-    } else {
-      document.body.classList.remove('body-no-scroll');
-    }
-    // Cleanup function to ensure the class is removed when the component unmounts
-    return () => {
-      document.body.classList.remove('body-no-scroll');
-    };
+    document.body.classList.toggle('body-no-scroll', isSubtitleOpen);
   }, [isSubtitleOpen]);
 
+  /* ----------------------------------------------
+     Handle Payment Redirect
+  ------------------------------------------------*/
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const paymentStatus = params.get('payment');
+    const success = params.get('payment') === 'success';
 
-    if (paymentStatus === 'success') {
-      toast.success('Payment successful! Your subscription has been activated.');
+    if (success) {
+      toast.success('Payment successful! Subscription activated.');
       refetchUsage();
-      window.history.replaceState({}, '', window.location.pathname);
     }
+
+    window.history.replaceState({}, '', window.location.pathname);
   }, [refetchUsage]);
 
-
+  /* ----------------------------------------------
+     Upload Notebook
+  ------------------------------------------------*/
   const handleNewNotebookClick = () => {
-    if (isSignedIn) {
-      setIsUploadModalOpen(true);
-    } else {
-      openSignIn();
-    }
+    if (!isSignedIn) return openSignIn();
+    setIsUploadModalOpen(true);
   };
 
-  const handleUploadComplete = () => {
-    fetchNotebooks();
+  const handleUploadComplete = async () => {
+    await fetchNotebooks();
   };
 
-  const deleteNotebook = async (jobId) => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`http://localhost:8000/notebooks/${jobId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+  /* ----------------------------------------------
+     Play Notebook (fetch subtitles + open player)
+  ------------------------------------------------*/
+  const playNotebook = useCallback(
+    async (notebook) => {
+      if (notebook.status !== 'completed') return;
 
-      if (response.ok) {
-        setNotebooks(notebooks.filter(notebook => notebook.job_id !== jobId));
-        if (currentPlayingNotebook && currentPlayingNotebook.job_id === jobId) {
-          setShowAudioPlayer(false);
-          setCurrentPlayingNotebook(null);
-          setIsSubtitleOpen(false);
-        }
-      } else {
-        console.error('Failed to delete notebook');
-        // Optionally, show an error message to the user
-      }
-    } catch (error) {
-      console.error('Error deleting notebook:', error);
-    }
-  };
-
-  const playNotebook = async (notebook) => {
-    if (notebook.status === 'completed') {
       try {
         const token = await getToken();
-        // CHANGE: Fetch the JSON subtitles instead of raw chunks
-        const response = await fetch(`http://localhost:8000/stream/subtitles/${notebook.user_id}/${notebook.job_id}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
+        const res = await fetch(
+          `http://localhost:8000/stream/subtitles/${notebook.user_id}/${notebook.job_id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
 
-        if (!response.ok) {
-           // Fallback if subtitles aren't ready? 
-           // Or just throw error
-           console.warn("Subtitles not found, maybe old job?");
-           setSubtitleData([]);
-        } else {
-           const data = await response.json();
-           // Expecting: { segments: [{start, end, text}, ...] }
-           setSubtitleData(data.segments || []);
-        }
+        let data = { segments: [] };
+        if (res.ok) data = await res.json();
 
-        setIsSubtitleOpen(true);
-        setCurrentPlayingNotebook(notebook);
-        setShowAudioPlayer(true);
-      } catch (error) {
-        console.error("Error setting notebook to play:", error);
+        setSubtitleData(data.segments || []);
+        setCurrentNotebook(notebook);
+
+        // Open audio first, then subtitles to avoid UI glitch
+        setShowPlayer(true);
+        setTimeout(() => setIsSubtitleOpen(true), 80);
+      } catch (err) {
+        console.error('Error playing notebook:', err);
       }
+    },
+    [getToken]
+  );
+
+  /* ----------------------------------------------
+     Delete Notebook Optimistically
+  ------------------------------------------------*/
+  const deleteNotebook = async (jobId) => {
+    const success = await deleteNotebookOptimistic(jobId);
+
+    if (success) {
+      toast.success('Notebook deleted');
+      if (currentNotebook?.job_id === jobId) {
+        setShowPlayer(false);
+        setCurrentNotebook(null);
+        setIsSubtitleOpen(false);
+      }
+    } else {
+      toast.error('Failed to delete');
     }
   };
 
-  // Get current subtitle based on player time
+  /* ----------------------------------------------
+     Notes Update from Player
+  ------------------------------------------------*/
+  const handleNotesUpdate = (count) => {
+    if (!currentNotebook) return;
+
+    const jobId = currentNotebook.job_id;
+
+    // Update only the notebook being viewed
+    updateNotebookStatus(nb =>
+      nb.job_id === jobId ? { ...nb, notesCount: count } : nb
+    );
+  };
+
   const getCurrentSubtitle = () => {
-    if (!subtitleData || subtitleData.length === 0) return '';
-    
-    const current = subtitleData.find(
-      segment => playerTime >= segment.start && playerTime < segment.end
+    if (!subtitleData.length) return '';
+    const active = subtitleData.find(
+      s => playerTime >= s.start && playerTime < s.end
     );
-    
-    return current ? current.text : '';
+    return active?.text || '';
   };
-
-  const closeAudioPlayer = useCallback(() => {
-    setShowAudioPlayer(false);
-    setCurrentPlayingNotebook(null);
-  }, []);
-
-  const closeSubtitleWindow = () => {
-    setIsSubtitleOpen(false);
-  };
-
-  const toggleSubtitleWindow = () => {
-    setIsSubtitleOpen(!isSubtitleOpen);
-  };
-
-  // Callback to update notes count in notebook when notes are created/updated/deleted
-  const handleNotesUpdate = useCallback((newNotesCount) => {
-    setNotebooks(prevNotebooks =>
-      prevNotebooks.map(nb =>
-        nb.job_id === currentPlayingNotebook?.job_id
-          ? { ...nb, notesCount: newNotesCount }
-          : nb
-      )
-    );
-  }, [currentPlayingNotebook]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-yellow-400">
-      <main className="grow p-8 relative">
-        <button 
-          onClick={handleNewNotebookClick}
-          className="absolute top-8 right-8 bg-black text-yellow-400 px-4 py-2 rounded-lg font-semibold hover:bg-gray-800 transition duration-300"
+    <div className="min-h-screen relative">
+      <main className="grow relative">
+        {/* Floating Button */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="fixed top-24 right-8 z-40"
         >
-          + New Notebook
-        </button>
-        <div className="mt-16 flex flex-wrap gap-4 justify-start">
-          {notebooks.map((notebook) => (
-            <NotebookCard 
-              key={notebook.id}
-              title={notebook.title}
-              voice={notebook.voice}
-              status={notebook.status}
-              onDelete={() => deleteNotebook(notebook.job_id)}
-              onOpen={() => playNotebook(notebook)}
-              userId={userId}
-              jobId={notebook.job_id}
-              getToken={getToken}
-              notesCount={notebook.notesCount}
-            />
+          <motion.button
+            whileHover={{ scale: 1.05, rotate: 90 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleNewNotebookClick}
+            className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-6 py-3 rounded-full font-bold shadow-2xl hover:shadow-yellow-400/50 flex items-center space-x-2"
+          >
+            <span className="text-2xl">+</span>
+            <span>New Notebook</span>
+          </motion.button>
+        </motion.div>
+
+        {/* Subscription */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-5xl mx-auto mb-12 px-8"
+        >
+          <SubscriptionInfo />
+        </motion.div>
+
+        {/* Notebook Grid */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="container mx-auto px-8 py-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+        >
+          {notebooks.map((nb, i) => (
+            <motion.div
+              key={nb.job_id}
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 * i }}
+            >
+              <NotebookCard
+                title={nb.title}
+                voice={nb.voice}
+                status={nb.status}
+                notesCount={nb.notesCount}
+                userId={nb.user_id}
+                jobId={nb.job_id}
+                getToken={getToken}
+                onOpen={() => playNotebook(nb)}
+                onDelete={() => deleteNotebook(nb.job_id)}
+              />
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       </main>
 
+      {/* Subtitle Window */}
       {isSubtitleOpen && (
-        <SubtitleWindow 
-           subtitles={subtitleData} 
-           currentTime={playerTime}
-           onClose={closeSubtitleWindow}
-           duration={duration}
-           onSeek={setSeekTime}
+        <SubtitleWindow
+          subtitles={subtitleData}
+          currentTime={playerTime}
+          duration={duration}
+          onSeek={setSeekTime}
+          onClose={() => setIsSubtitleOpen(false)}
         />
       )}
 
-      {showAudioPlayer && currentPlayingNotebook && (
-        <AudioPlayer 
-          title={currentPlayingNotebook.title}
-          manifestUrl={currentPlayingNotebook.manifestUrl}
+      {/* Audio Player */}
+      {showPlayer && currentNotebook && (
+        <AudioPlayer
+          title={currentNotebook.title}
+          manifestUrl={currentNotebook.manifestUrl}
+          userId={userId}
+          jobId={currentNotebook.job_id}
           getToken={getToken}
-          onClose={closeAudioPlayer}
-          onToggleSubtitle={toggleSubtitleWindow}
-          onTimeUpdate={(time) => setPlayerTime(time)}
+          onClose={() => setShowPlayer(false)}
+          onToggleSubtitle={() => setIsSubtitleOpen(v => !v)}
+          onTimeUpdate={setPlayerTime}
           onDurationChange={setDuration}
           seekTime={seekTime}
-          userId={userId}
-          jobId={currentPlayingNotebook.job_id}
           currentSubtitle={getCurrentSubtitle()}
           onNotesUpdate={handleNotesUpdate}
           isSubtitleOpen={isSubtitleOpen}
-          onCloseSubtitle={closeSubtitleWindow}
+          onCloseSubtitle={() => setIsSubtitleOpen(false)}
         />
       )}
 
-      <UploadModal 
+      {/* Upload */}
+      <UploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
-        onUpload={handleUploadComplete} 
+        onUpload={handleUploadComplete}
       />
     </div>
   );

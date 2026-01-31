@@ -1,6 +1,8 @@
-from cleantext import clean
-from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
 import os
+
+from cleantext import clean
+
+from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
 
 
 def TextCleaner(text):

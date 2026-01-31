@@ -1,11 +1,11 @@
-from openai import OpenAI
 # import pyaudio
 from fastapi.responses import StreamingResponse
-
+from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://pretelephonic-loralee-resignedly.ngrok-free.dev/v1", api_key="not-needed")
-
+    base_url="https://pretelephonic-loralee-resignedly.ngrok-free.dev/v1",
+    api_key="not-needed",
+)
 
 
 def tts_generator(text: str, voice: str = "af_bella"):

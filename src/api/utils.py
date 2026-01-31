@@ -1,20 +1,22 @@
+import json
 import logging
 import os
 import re
-import json
-from uuid import uuid4
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from datetime import datetime, timezone
-from sqlmodel import SQLModel, Field, Session, create_engine, select
-from src.TTS_Workers.tasks import process_speeches, get_s3_client
-from src.TextExtractor.text_extractor import TextExtractor
+from uuid import uuid4
+
+from dotenv import load_dotenv
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+from src.api.schema import Notebook, UserSubscription
 from src.Chunker.chunker import segment_text
 from src.TextCleaner.cleaner import cleaner_stage_2
 from src.TextCleaner.cleaner_stage1 import TTSTextCleaner
+from src.TextExtractor.text_extractor import TextExtractor
+from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
-from src.api.schema import Notebook, UserSubscription
-from dotenv import load_dotenv
 
 # Subscription Character Limits
 CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID", "")

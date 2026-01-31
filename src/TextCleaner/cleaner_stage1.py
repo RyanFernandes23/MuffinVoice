@@ -1,5 +1,5 @@
-import re
 import json
+import re
 from typing import Dict
 
 
@@ -29,12 +29,13 @@ class AbbreviationManager:
             print("Couldn't find abbreviations.json, creating one")
             self.save_abbreviations()
 
-
     def remove_extra_spaces(self, text: str) -> str:
         return re.sub(r"\s+", " ", text)
+
     def remove_linebreaks(self, text: str) -> str:
 
         return text.replace("\n", " ")
+
     def citations_cleaner(self, text: str) -> str:
         """Removes citation references like [12] and superscripts like ³³."""
         return re.sub(r"(\[\d+\]|[¹²³⁴⁵⁶⁷⁸⁹]+)", "", text)
@@ -96,9 +97,12 @@ class TTSTextCleaner:
 
 if __name__ == "__main__":
     cleaner = TTSTextCleaner()
-    res = cleaner("Hello my name is inc. I had an appt. for mrs. darwin ³³ [12]. I also have a phone number 123-456-7890. My email is 6gE3F@example.com")
+    res = cleaner(
+        "Hello my name is inc. I had an appt. for mrs. darwin ³³ [12]. I also have a phone number 123-456-7890. My email is 6gE3F@example.com"
+    )
     print(res)
 
     # Show all abbreviations with source info
     import pprint
+
     pprint.pprint(cleaner.abbrev_manager.all())

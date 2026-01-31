@@ -1,8 +1,8 @@
 # src/utils/redis_client.py
-import redis
 import os
-from dotenv import load_dotenv
 
+import redis
+from dotenv import load_dotenv
 
 load_dotenv()
 pool = redis.ConnectionPool(
@@ -13,4 +13,4 @@ pool = redis.ConnectionPool(
     max_connections=30,
 )
 
-redis_client = redis.StrictRedis(connection_pool=pool,db=0)
+redis_client = redis.StrictRedis(connection_pool=pool, db=0)

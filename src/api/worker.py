@@ -1,16 +1,20 @@
-import json
 import io
+import json
+
 import boto3
+import mutagen.mp3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from celery import Celery
-import mutagen.mp3
 
 from src.audio_processing.audio_processor import tts_generator
 
 # --- Celery and Boto3 Setup for Worker ---
-celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
+celery_app = Celery(
+    "tasks", broker="redis://localhost:6379/0", backend="redis://localhost:6379/0"
+)
 S3_BUCKET_NAME = "ttsfiles"
+
 
 def get_s3_client():
     return boto3.client(
@@ -19,15 +23,17 @@ def get_s3_client():
         aws_access_key_id="admin",
         aws_secret_access_key="change-me-please",
         region_name="us-east-1",
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"})
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
 
+
 def get_audio_duration_seconds(audio_bytes: bytes) -> float:
-        try:
-            mp3 = mutagen.mp3.MP3(io.BytesIO(audio_bytes))
-            return mp3.info.length
-        except mutagen.MutagenError:
-            return 0.0
+    try:
+        mp3 = mutagen.mp3.MP3(io.BytesIO(audio_bytes))
+        return mp3.info.length
+    except mutagen.MutagenError:
+        return 0.0
+
 
 @celery_app.task
 def generate_and_save_manifest_task(self, user_id, job_id, voice):
@@ -44,13 +50,15 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
         s3.head_object(Bucket=S3_BUCKET_NAME, Key=manifest_key)
         return f"Manifest for job {job_id}, voice {voice} already exists. Skipping."
     except ClientError as e:
-        if e.response['Error']['Code'] != '404':
+        if e.response["Error"]["Code"] != "404":
             raise
 
     try:
         # get chunk.json
-        chunks_response = s3.get_object(Bucket=S3_BUCKET_NAME, Key=f"{s3_prefix}/chunks.json")
-        all_text_chunks = json.loads(chunks_response['Body'].read())
+        chunks_response = s3.get_object(
+            Bucket=S3_BUCKET_NAME, Key=f"{s3_prefix}/chunks.json"
+        )
+        all_text_chunks = json.loads(chunks_response["Body"].read())
 
         chunk_metadata = []
 
@@ -64,15 +72,17 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
                 if isinstance(result, (bytes, bytearray)):
                     audio_bytes = result
                 else:
-                    audio_bytes = b''.join(result)
+                    audio_bytes = b"".join(result)
 
                 duration_sec = get_audio_duration_seconds(audio_bytes)
                 s3_key = f"{s3_prefix}/audio/{voice}/{i}.mp3"
 
                 # push bytes to s3
                 s3.put_object(
-                    Bucket=S3_BUCKET_NAME, Key=s3_key,
-                    Body=audio_bytes, ContentType="audio/mpeg"
+                    Bucket=S3_BUCKET_NAME,
+                    Key=s3_key,
+                    Body=audio_bytes,
+                    ContentType="audio/mpeg",
                 )
                 chunk_metadata.append({"index": i, "duration": duration_sec})
             except Exception as chunk_error:
@@ -82,23 +92,24 @@ def generate_and_save_manifest_task(self, user_id, job_id, voice):
         if not chunk_metadata:
             raise ValueError("All chunks failed — retrying task.")
 
-        total_duration = sum(item['duration'] for item in chunk_metadata)
+        total_duration = sum(item["duration"] for item in chunk_metadata)
         current_start_time = 0.0
-        for item in sorted(chunk_metadata, key=lambda x: x['index']):
-            item['start_time'] = round(current_start_time, 2)
-            current_start_time += item['duration']
+        for item in sorted(chunk_metadata, key=lambda x: x["index"]):
+            item["start_time"] = round(current_start_time, 2)
+            current_start_time += item["duration"]
 
         final_manifest = {
             "job_id": job_id,
             "voice": voice,
             "total_duration": round(total_duration, 2),
-            "chunks": sorted(chunk_metadata, key=lambda x: x['index'])
+            "chunks": sorted(chunk_metadata, key=lambda x: x["index"]),
         }
 
         s3.put_object(
-            Bucket=S3_BUCKET_NAME, Key=manifest_key,
-            Body=json.dumps(final_manifest, ensure_ascii=False).encode('utf-8'),
-            ContentType="application/json"
+            Bucket=S3_BUCKET_NAME,
+            Key=manifest_key,
+            Body=json.dumps(final_manifest, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
         )
 
         return f"Successfully completed job {job_id} for voice {voice}."

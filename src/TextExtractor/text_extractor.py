@@ -1,10 +1,11 @@
+import gc
 import os
+
 import docx
 import pdfplumber
+import pypandoc
 from odf.opendocument import load
 from odf.text import P
-import pypandoc
-import gc
 
 
 class TextExtractor:
@@ -15,7 +16,9 @@ class TextExtractor:
     def extract_file(self):
         """Default extraction method"""
         try:
-            return pypandoc.convert_file(self.filepath, 'plain', extra_args=['--wrap=none'])
+            return pypandoc.convert_file(
+                self.filepath, "plain", extra_args=["--wrap=none"]
+            )
         except Exception as e:
             print(f"[WARN] Pandoc failed for {self.filepath} → {e}")
             return self.fallback_extract()
@@ -77,11 +80,11 @@ class TextExtractor:
                 for i, page in enumerate(pdf.pages):
                     page_text = page.extract_text() or ""
                     text_parts.append(page_text)
-                    
+
                     # Clear memory every 10 pages
                     if i % 10 == 0:
                         gc.collect()
-                        
+
             return "".join(text_parts)
         except Exception as e:
             print(f"PDF large extraction failed: {e}")
@@ -147,7 +150,7 @@ if __name__ == "__main__":
         r"src\TTS\Files\resa.md",
         r"src\TTS\Files\Sway.epub",
         r"src\TTS\Files\indes.html",
-        r"src\TTS\Files\ram.txt"
+        r"src\TTS\Files\ram.txt",
     ]
 
     for f in files:

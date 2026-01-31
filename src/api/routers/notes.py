@@ -1,10 +1,11 @@
 # src/api/routers/notes.py
-from fastapi import APIRouter, HTTPException, Depends
-from sqlmodel import Session, select
 from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
 from src.api.deps import clerk_auth, logger
-from src.api.schema import Notebook, Note
+from src.api.schema import Note, Notebook
 from src.api.utils import get_session
 
 notes_router = APIRouter(prefix="/notes", tags=["notes"])

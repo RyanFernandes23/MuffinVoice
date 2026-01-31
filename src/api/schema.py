@@ -1,8 +1,9 @@
-from sqlmodel import SQLModel, Field, Session, create_engine, select
-from typing import Optional, List
-from datetime import datetime, timezone
 import uuid
+from datetime import datetime, timezone
+from typing import List, Optional
+
 from sqlalchemy import JSON
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
 class Notebook(SQLModel, table=True):

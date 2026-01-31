@@ -8,9 +8,9 @@ from fastapi import Depends, HTTPException
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from sqlmodel import Session, select
 
-from src.TTS_Workers.tasks import get_s3_client
-from src.api.utils import get_session
 from src.api.schema import Notebook
+from src.api.utils import get_session
+from src.TTS_Workers.tasks import get_s3_client
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

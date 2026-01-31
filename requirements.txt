@@ -18,3 +18,4 @@ uvicorn
 python-docx
 torch==2.8.0
 python-multipart
+fastapi-clerk-auth==0.0.9

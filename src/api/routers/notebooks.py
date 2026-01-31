@@ -1,38 +1,21 @@
 # src/api/routers/notebooks.py
-from fastapi import (
-    APIRouter,
-    HTTPException,
-    Depends,
-    UploadFile,
-    File,
-    Header,
-    BackgroundTasks,
-    Response,
-)
-from sqlmodel import Session, select, desc
-from typing import Optional, List
-from pathlib import Path
-from werkzeug.utils import secure_filename
-from uuid import uuid4
 import os
+from pathlib import Path
+from typing import List, Optional
+from uuid import uuid4
 
-from src.api.deps import (
-    clerk_auth,
-    AVAILABLE_VOICES,
-    MAX_FILE_SIZE,
-    logger,
-    get_current_user,
-)
-from src.api.schema import Notebook, Note
-from src.api.utils import (
-    sanitize_display_filename,
-    get_unique_notebook_title,
-    set_job_status,
-    get_job_status,
-    get_session,
-    process_file_task,
-)
-from src.TTS_Workers.tasks import process_speeches, get_s3_client
+from fastapi import (APIRouter, BackgroundTasks, Depends, File, Header,
+                     HTTPException, Response, UploadFile)
+from sqlmodel import Session, desc, select
+from werkzeug.utils import secure_filename
+
+from src.api.deps import (AVAILABLE_VOICES, MAX_FILE_SIZE, clerk_auth,
+                          get_current_user, logger)
+from src.api.schema import Note, Notebook
+from src.api.utils import (get_job_status, get_session,
+                           get_unique_notebook_title, process_file_task,
+                           sanitize_display_filename, set_job_status)
+from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(tags=["notebooks", "tts", "s3"])

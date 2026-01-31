@@ -1,13 +1,54 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { FaTimes } from 'react-icons/fa';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { MoreHorizontal, Play, FileText, Trash2, X } from 'lucide-react';
 
-export default function NotebookCard({ title, voice, status, onDelete, onOpen, userId, jobId, getToken, notesCount: initialNotesCount = 0 }) {
+export default function NotebookCard({ 
+  title, 
+  voice, 
+  status, 
+  onDelete, 
+  onOpen, 
+  userId, 
+  jobId, 
+  getToken, 
+  notesCount: initialNotesCount = 0 
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [notesCount, setNotesCount] = useState(initialNotesCount);
+  const [isLoadingCount, setIsLoadingCount] = useState(false);
   const menuRef = useRef(null);
+
+  // Memoize the fetch function to avoid recreating it on every render
+  const fetchNotesCount = useCallback(async () => {
+    if (!userId || !jobId || !getToken) return;
+    
+    setIsLoadingCount(true);
+    try {
+      const token = await getToken();
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/notes_count/${userId}/${jobId}`, 
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNotesCount(data.count);
+      } else {
+        console.error('Failed to fetch notes count:', response.status);
+      }
+    } catch (error) {
+      console.error('Error fetching notes count:', error);
+    } finally {
+      setIsLoadingCount(false);
+    }
+  }, [userId, jobId, getToken]);
 
   // Update notes count when prop changes
   useEffect(() => {
@@ -16,28 +57,12 @@ export default function NotebookCard({ title, voice, status, onDelete, onOpen, u
 
   // Fetch notes count on initial mount if not provided
   useEffect(() => {
-    if (initialNotesCount !== 0 || !userId || !jobId || !getToken) return;
+    if (initialNotesCount === 0) {
+      fetchNotesCount();
+    }
+  }, [initialNotesCount, fetchNotesCount]);
 
-    const fetchNotesCount = async () => {
-      try {
-        const token = await getToken();
-        const response = await fetch(`http://localhost:8000/notes_count/${userId}/${jobId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setNotesCount(data.count);
-        }
-      } catch (error) {
-        console.error('Error fetching notes count:', error);
-      }
-    };
-
-    fetchNotesCount();
-  }, [userId, jobId, getToken, initialNotesCount]);
-
+  // Close menu when clicking outside
   useEffect(() => {
     function handleClickOutside(event) {
       if (menuRef.current && !menuRef.current.contains(event.target)) {
@@ -45,86 +70,281 @@ export default function NotebookCard({ title, voice, status, onDelete, onOpen, u
       }
     }
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [menuRef]);
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isOpen]);
 
-  const handleOpen = () => {
+  // Close menu on escape key
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        setShowConfirmDialog(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
+
+  const handleOpen = useCallback(() => {
     onOpen();
     setIsOpen(false);
-  };
+  }, [onOpen]);
 
-  const handleDeleteClick = () => {
+  const handleDeleteClick = useCallback(() => {
     setShowConfirmDialog(true);
-    setIsOpen(false); // Close the 3-dot menu when opening the confirm dialog
-  };
+    setIsOpen(false);
+  }, []);
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = useCallback(() => {
     onDelete();
     setShowConfirmDialog(false);
-  };
+  }, [onDelete]);
 
-  const handleCancelDelete = () => {
+  const handleCancelDelete = useCallback(() => {
     setShowConfirmDialog(false);
-  };
+  }, []);
 
-  const handleMenuToggle = (e) => {
+  const handleMenuToggle = useCallback((e) => {
     e.stopPropagation();
-    setIsOpen(!isOpen);
+    setIsOpen(prev => !prev);
+  }, []);
+
+  // Memoize computed values
+  const displayTitle = title.length > 35 ? `${title.substring(0, 32)}...` : title;
+  
+  const getStatusColor = () => {
+    switch(status) {
+      case 'completed': return 'from-green-500 to-emerald-600';
+      case 'processing': return 'from-yellow-500 to-orange-600';
+      case 'failed': return 'from-red-500 to-pink-600';
+      default: return 'from-gray-500 to-slate-600';
+    }
   };
 
-  const displayTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
+  const getStatusIcon = () => {
+    switch(status) {
+      case 'completed': 
+        return <FileText className="w-4 h-4" />;
+      case 'processing': 
+        return (
+          <motion.div 
+            animate={{ rotate: 360 }} 
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          >
+            <Play className="w-4 h-4" />
+          </motion.div>
+        );
+      case 'failed': 
+        return <X className="w-4 h-4" />;
+      default: 
+        return <FileText className="w-4 h-4" />;
+    }
+  };
 
   return (
-    <div className="bg-black rounded-lg shadow-md p-6 mb-4 relative cursor-pointer" onClick={handleOpen}>
-      <div className="flex justify-between items-start">
-        <div>
-          <h2 className="text-xl font-semibold text-yellow-400 mb-2">{displayTitle}</h2>
-          <p className="text-yellow-400 mb-1">Voice: {voice}</p>
-          <p className="text-yellow-400 mb-2">Status: {status} {status === 'processing' && (
-            <svg className="animate-spin h-4 w-4 text-yellow-400 inline-block ml-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          )}</p>
-          {/* Notes Badge */}
-          <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-700 text-green-100 text-xs rounded-full">
-            <span>📋</span>
-            <span>{notesCount} note{notesCount !== 1 ? 's' : ''}</span>
-          </div>
-        </div>
-        <div className="relative">
-          <button onClick={handleMenuToggle} className="text-yellow-400 hover:text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-            </svg>
-          </button>
-          {isOpen && (
-            <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-md shadow-lg z-10 py-1">
-              <button onClick={handleOpen} className="block px-4 py-2 text-sm text-white hover:bg-gray-700 w-full text-left">Open</button>
-              <div className="border-b border-gray-700 my-1"></div>
-              <button onClick={handleDeleteClick} className="block w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-900 w-full text-left">Delete</button>
+    <>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        whileHover={{ y: -5 }}
+        transition={{ duration: 0.3 }}
+        className="glass rounded-2xl p-6 mb-6 relative cursor-pointer group"
+        onClick={handleOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleOpen();
+          }
+        }}
+        aria-label={`Open notebook: ${title}`}
+      >
+        {/* Gradient accent on hover */}
+        <div 
+          className="absolute inset-0 bg-gradient-to-br from-yellow-400/5 to-orange-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+          aria-hidden="true"
+        />
+        
+        <div className="relative z-10">
+          <div className="flex justify-between items-start mb-4">
+            <div className="flex-1">
+              <motion.h3 
+                className="text-xl font-bold text-white mb-3"
+                whileHover={{ color: "#FDE047" }}
+              >
+                {displayTitle}
+              </motion.h3>
+              
+              <div className="flex items-center space-x-3 mb-3">
+                <div className="flex items-center space-x-2 text-sm text-white/80">
+                  <FileText className="w-4 h-4" aria-hidden="true" />
+                  <span>Voice: {voice}</span>
+                </div>
+                
+                <div 
+                  className={`flex items-center space-x-2 text-sm px-3 py-1 rounded-full bg-gradient-to-r ${getStatusColor()}`}
+                  role="status"
+                  aria-label={`Status: ${status}`}
+                >
+                  {getStatusIcon()}
+                  <span className="font-medium capitalize">{status}</span>
+                  {status === 'processing' && (
+                    <motion.div
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      className="w-2 h-2 bg-white rounded-full"
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              </div>
+              
+              {/* Notes Badge */}
+              <motion.div 
+                className="inline-flex items-center space-x-1 px-3 py-1 bg-gradient-to-r from-green-500/20 to-emerald-600/20 border border-green-400/30 text-green-300 text-sm rounded-full"
+                whileHover={{ scale: 1.05 }}
+                aria-label={`${notesCount} notes`}
+              >
+                <FileText className="w-3 h-3" aria-hidden="true" />
+                <span className="font-medium">
+                  {isLoadingCount ? '...' : `${notesCount} note${notesCount !== 1 ? 's' : ''}`}
+                </span>
+              </motion.div>
             </div>
-          )}
+            
+            {/* Menu */}
+            <div className="relative">
+              <motion.button
+                whileHover={{ scale: 1.1, rotate: 90 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={handleMenuToggle}
+                className="text-white/60 hover:text-yellow-400 p-2 rounded-lg hover:bg-white/10 transition-all duration-200"
+                aria-label="Open menu"
+                aria-expanded={isOpen}
+                aria-haspopup="true"
+              >
+                <MoreHorizontal className="w-5 h-5" />
+              </motion.button>
+              
+              <AnimatePresence>
+                {isOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    ref={menuRef}
+                    className="absolute right-0 top-12 w-52 glass rounded-xl shadow-2xl border border-white/20 overflow-hidden z-50"
+                    role="menu"
+                  >
+                    <motion.button
+                      whileHover={{ x: 5 }}
+                      onClick={handleOpen}
+                      className="w-full text-left px-4 py-3 text-white hover:bg-white/10 flex items-center space-x-3 transition-colors duration-200"
+                      role="menuitem"
+                    >
+                      <Play className="w-4 h-4 text-green-400" aria-hidden="true" />
+                      <span>Open Notebook</span>
+                    </motion.button>
+                    <div className="border-t border-white/10" aria-hidden="true" />
+                    <motion.button
+                      whileHover={{ x: 5 }}
+                      onClick={handleDeleteClick}
+                      className="w-full text-left px-4 py-3 text-red-400 hover:bg-red-500/20 flex items-center space-x-3 transition-colors duration-200"
+                      role="menuitem"
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                      <span>Delete</span>
+                    </motion.button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+          
+          {/* Hover effect overlay */}
+          <div 
+            className="absolute inset-0 rounded-2xl bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-500"
+            aria-hidden="true"
+          />
         </div>
-      </div>
+      </motion.div>
 
-      {showConfirmDialog && (
-        <div className="fixed inset-0 bg-transparent flex justify-center items-center z-50">
-          <div className="bg-white p-8 rounded-lg shadow-xl text-gray-800 relative">
-            <button onClick={handleCancelDelete} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600">
-              <FaTimes className="h-5 w-5" />
-            </button>
-            <p className="mb-4">Are you sure you want to delete this notebook?</p>
-            <div className="flex justify-end space-x-4">
-              <button onClick={handleCancelDelete} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 font-semibold">Cancel</button>
-              <button onClick={handleConfirmDelete} className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-500 font-semibold">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      {/* Confirmation Dialog */}
+      <AnimatePresence>
+        {showConfirmDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-dialog-title"
+            aria-describedby="delete-dialog-description"
+            onClick={handleCancelDelete}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.2 }}
+              className="glass rounded-2xl p-8 max-w-md w-full mx-4 relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                onClick={handleCancelDelete} 
+                className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/10"
+                aria-label="Close dialog"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <div className="text-center">
+                <div 
+                  className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4"
+                  aria-hidden="true"
+                >
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 id="delete-dialog-title" className="text-xl font-bold text-white mb-2">
+                  Delete Notebook?
+                </h3>
+                <p id="delete-dialog-description" className="text-gray-300 mb-6">
+                  Are you sure you want to delete <span className="font-semibold text-yellow-400">&quot;{title}&quot;</span>? This action cannot be undone.
+                </p>
+                
+                <div className="flex justify-center space-x-4">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleCancelDelete}
+                    className="px-6 py-3 glass border-2 border-white/20 text-white hover:bg-white/10 rounded-xl font-medium transition-all duration-200"
+                  >
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleConfirmDelete}
+                    className="px-6 py-3 bg-linear-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 shadow-lg transition-all duration-200"
+                  >
+                    Delete
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
