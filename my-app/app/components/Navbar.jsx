@@ -4,13 +4,12 @@ import Link from 'next/link';
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Sparkles, Tag, LayoutDashboard, Menu, X, ArrowUpRight } from 'lucide-react';
-import UsageProgress from './UsageProgress';
-import { useUsage } from '../hooks/useUsage';
+import { Sparkles, Tag, LayoutDashboard, Menu, X } from 'lucide-react';
+
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { usageData, loading, error } = useUsage();
+  
 
   return (
     <nav className="glass fixed top-0 left-0 right-0 z-50 px-4 md:px-6 py-3 border-b border-white/10">
@@ -48,28 +47,13 @@ export default function Navbar() {
           transition={{ duration: 0.5, delay: 0.1 }}
           className="hidden md:flex items-center gap-2"
         >
-          {loading ? (
-            <div className="px-4 py-2 rounded-xl text-gray-300 flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
-              <span>Loading Plan...</span>
-            </div>
-          ) : error || !usageData ? (
-            <Link 
-              href="/dashboard" 
-              className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
-            >
-              <LayoutDashboard className="w-4 h-4" />
-              <span>Dashboard</span>
-            </Link>
-          ) : (
-            <Link 
-              href="/dashboard" 
-              className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
-            >
-              <Tag className="w-4 h-4" />
-              <span>{usageData.plan_name}</span>
-            </Link>
-          )}
+          <Link
+          href="/dashboard"
+          className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          <span>Dashboard</span>
+        </Link>
           
           <Link
             href="/pricing"
@@ -146,30 +130,14 @@ export default function Navbar() {
             className="md:hidden overflow-hidden glass-card mt-2 rounded-2xl mx-2"
           >
             <div className="p-4 space-y-2">
-              {loading ? (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300">
-                  <div className="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
-                  <span>Loading Plan...</span>
-                </div>
-              ) : error || !usageData ? (
-                <Link 
-                  href="/dashboard" 
-                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                >
-                  <LayoutDashboard className="w-5 h-5" />
-                  <span>Dashboard</span>
-                </Link>
-              ) : (
-                <Link 
-                  href="/dashboard" 
-                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                >
-                  <Tag className="w-5 h-5" />
-                  <span>{usageData.plan_name}</span>
-                </Link>
-              )}
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <LayoutDashboard className="w-5 h-5" />
+                <span>Dashboard</span>
+              </Link>
               <Link 
                 href="/pricing" 
                 className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"

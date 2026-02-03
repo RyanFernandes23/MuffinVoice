@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { FaTimes, FaCrosshairs } from 'react-icons/fa';
+import { FaTimes } from 'react-icons/fa';
 
 export default function SubtitleWindow({ subtitles, currentTime, onClose, duration, onSeek }) {
   const scrollContainerRef = useRef(null);

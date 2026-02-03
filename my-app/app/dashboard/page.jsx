@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { useAuth, useClerk, SignedIn } from '@clerk/nextjs';
+import { useAuth, SignedIn } from '@clerk/nextjs';
 import { toast } from 'react-hot-toast';
 import { Plus, Sparkles, FilePlus } from 'lucide-react';
 
@@ -16,16 +16,10 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
-import UsageProgress from '../components/UsageProgress';
 
-// Hooks
-import { useUsage } from '../hooks/useUsage';
-// import useDashboardData from './useDashboardData';
 
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
-  const { openSignIn } = useClerk();
-  const { refetch: refetchUsage } = useUsage();
 
   const [notebooks, setNotebooks] = useState([]);
 
@@ -151,13 +145,13 @@ export default function DashboardPage() {
     }
 
     window.history.replaceState({}, '', window.location.pathname);
-  }, [refetchUsage]);
+  }, []);
 
   /* ----------------------------------------------
      Upload Notebook
   ------------------------------------------------*/
   const handleNewNotebookClick = () => {
-    if (!isSignedIn) return openSignIn();
+    if (!isSignedIn) return;
     setIsUploadModalOpen(true);
   };
 
@@ -259,11 +253,7 @@ export default function DashboardPage() {
           className="fixed top-20 right-6 md:right-8 z-40 flex flex-row items-center gap-4 justify-end"
         >
           {/* Usage Progress */}
-          <SignedIn>
-            <motion.div>
-              <UsageProgress />
-            </motion.div>
-          </SignedIn>
+
 
           {/* Floating Button */}
           <motion.div

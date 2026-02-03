@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from 'hls.js';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Play, Pause, Volume2, VolumeX, Volume1,
-  X, StickyNote, List, ChevronDown, Loader2,
+  X, StickyNote, ChevronDown, Loader2,
   Rewind, FastForward, Headphones, Mic2, FileText, Settings2, History, MessageSquareText
 } from 'lucide-react';
 import NotesModal from './NotesModal';

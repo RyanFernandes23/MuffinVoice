@@ -3,17 +3,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { FaTrash, FaEdit, FaSearch, FaTimes } from 'react-icons/fa';
 
-export default function NotesList({ 
-  notes = [], 
-  onNoteClick, 
-  onDeleteNote, 
-  onEditNote, 
+export default function NotesList({
+  notes = [],
+  onNoteClick,
+  onDeleteNote,
+  onEditNote,
   isLoading = false,
-  userId,
-  jobId,
-  getToken
-}) {
-  const [searchTerm, setSearchTerm] = useState('');
+}) {  const [searchTerm, setSearchTerm] = useState('');
   const [deletingNoteId, setDeletingNoteId] = useState(null);
   const searchTimeoutRef = useRef(null);
 
