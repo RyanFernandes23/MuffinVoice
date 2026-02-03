@@ -8,8 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routers.notebooks import notebooks_router
 from src.api.routers.notes import notes_router
-from src.api.routers.payments import payments_router
-from src.api.routers.subscription import subscription_router
 from src.api.utils import create_db_and_tables
 
 load_dotenv()
@@ -38,5 +36,4 @@ app.add_middleware(
 
 app.include_router(notebooks_router)
 app.include_router(notes_router)
-app.include_router(subscription_router)
-app.include_router(payments_router)
+
