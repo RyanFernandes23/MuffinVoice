@@ -8,7 +8,7 @@ from src.api.deps import clerk_auth, logger
 from src.api.schema import Note, Notebook
 from src.api.utils import get_session
 
-notes_router = APIRouter(prefix="/notes", tags=["notes"])
+notes_router = APIRouter(prefix="/api/notes", tags=["notes"])
 
 
 @notes_router.post("/{user_id}/{job_id}")
@@ -245,7 +245,7 @@ async def delete_note(
         raise HTTPException(status_code=500, detail="Error deleting note")
 
 
-@notes_router.get("_count/{user_id}/{job_id}")
+@notes_router.get("/count/{user_id}/{job_id}")
 async def get_notes_count(
     user_id: str,
     job_id: str,

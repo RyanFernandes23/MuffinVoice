@@ -7,6 +7,7 @@ import { usePlan } from '../hooks/usePlan';
 import PaymentModal from '../components/PaymentModal';
 import { toast } from 'react-hot-toast';
 import Link from 'next/link';
+import { motion } from 'framer-motion';
 
 const pricingTiers = [
   {
@@ -59,7 +60,7 @@ const pricingTiers = [
 function CheckIcon() {
   return (
     <svg
-      className="w-5 h-5 text-green-500"
+      className="w-5 h-5 text-success"
       fill="none"
       stroke="currentColor"
       viewBox="0 0 24 24"
@@ -77,7 +78,7 @@ function CheckIcon() {
 function XIcon() {
   return (
     <svg
-      className="w-5 h-5 text-gray-400"
+      className="w-5 h-5 text-foreground"
       fill="none"
       stroke="currentColor"
       viewBox="0 0 24 24"
@@ -191,25 +192,25 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen relative overflow-hidden">
       {/* Animated header section */}
-      <div className="relative z-10 py-20">
+      <div className="relative z-10 py-10">
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
-          className="text-center mb-16"
+          className="text-center"
         >
           <motion.h1 
-            className="text-6xl font-bold text-white mb-6"
+            className="text-5xl font-bold text-white mb-6"
             initial={{ scale: 0.8 }}
             animate={{ scale: 1 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <span className="bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary via-accent to-error bg-clip-text text-transparent">
               Simple, Transparent Pricing
             </span>
           </motion.h1>
           <motion.p 
-            className="text-gray-300 text-xl max-w-3xl mx-auto leading-relaxed"
+            className="text-foreground text-lg max-w-3xl mx-auto leading-relaxed"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.4 }}
@@ -218,8 +219,8 @@ export default function PricingPage() {
           </motion.p>
         </motion.div>
 
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-7xl mx-auto">
+        <div className="container mx-auto px-4 h-full mt-10">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-6xl mx-auto h-full items-stretch">
 
             {pricingTiers.map((tier, index) => (
               <motion.div
@@ -229,9 +230,9 @@ export default function PricingPage() {
                 transition={{ duration: 0.6, delay: index * 0.1 }}
                 onMouseEnter={() => setHoveredPlan(tier.planId)}
                 onMouseLeave={() => setHoveredPlan(null)}
-                className={`relative rounded-3xl p-8 transition-all duration-500 ${
+                className={`relative rounded-3xl p-6 transition-all duration-500 flex flex-col flex-grow ${
                   tier.highlighted
-                    ? 'glass border-2 border-yellow-400/50 shadow-2xl shadow-yellow-400/20 scale-105'
+                    ? 'glass border-2 border-primary/50 shadow-2xl shadow-primary/20 scale-105'
                     : hoveredPlan === tier.planId
                     ? 'glass border-2 border-white/20 shadow-xl transform -translate-y-2'
                     : 'glass border-2 border-white/10 hover:border-white/20'
@@ -244,7 +245,7 @@ export default function PricingPage() {
                     transition={{ duration: 0.3, delay: 0.5 + index * 0.1 }}
                     className="absolute -top-4 left-1/2 transform -translate-x-1/2"
                   >
-                    <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-6 py-2 rounded-full text-sm font-bold shadow-lg">
+                    <span className="bg-gradient-to-r from-primary to-accent text-white px-6 py-2 rounded-full text-sm font-bold shadow-lg">
                       Most Popular
                     </span>
                   </motion.div>
@@ -252,36 +253,36 @@ export default function PricingPage() {
 
                 <div className="text-center mb-8">
                   <motion.h3 
-                    className="text-3xl font-bold text-white mb-3"
+                    className="text-3xl font-bold text-foreground mb-3"
                     animate={{ 
-                      color: hoveredPlan === tier.planId ? "#FDE047" : "#FFFFFF"
+                      color: hoveredPlan === tier.planId ? "var(--primary)" : "var(--foreground)"
                     }}
                   >
                     {tier.name}
                   </motion.h3>
-                  <p className="text-gray-300 text-medium">{tier.description}</p>
+                  <p className="text-foreground text-medium">{tier.description}</p>
                 </div>
 
                 <div className="text-center mb-8">
                   <div className="flex items-baseline justify-center">
-                    <span className={`text-6xl font-bold transition-all duration-300 ${
-                      hoveredPlan === tier.planId ? 'text-yellow-400' : 'text-white'
+                    <span className={`text-5xl font-bold transition-all duration-300 ${
+                      hoveredPlan === tier.planId ? 'text-primary' : 'text-foreground'
                     }`}>
                       {tier.price}
                     </span>
                     {tier.period && (
-                      <span className="text-gray-400 ml-2 text-xl">{tier.period}</span>
+                      <span className="text-foreground ml-2 text-lg">{tier.period}</span>
                     )}
                   </div>
                   <motion.p 
-                    className="text-yellow-400 text-lg mt-3 font-medium"
+                    className="text-primary text-lg mt-3 font-medium"
                     animate={{ opacity: hoveredPlan === tier.planId ? 1 : 0.7 }}
                   >
                     {tier.monthlyLimit}
                   </motion.p>
                 </div>
 
-                <ul className="space-y-4 mb-10">
+                <ul className="space-y-4 mb-6">
                   {tier.features.map((feature, index) => (
                     <motion.li 
                       key={index} 
@@ -300,7 +301,7 @@ export default function PricingPage() {
                         <XIcon />
                       }
                       <span className={`${
-                        feature.available ? 'text-gray-200' : 'text-gray-500'
+                        feature.available ? 'text-foreground' : 'text-foreground/50'
                       }`}>
                         {feature.text}
                       </span>
@@ -316,10 +317,10 @@ export default function PricingPage() {
                       <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                         <Link
                           href={tier.planId === 'explorer' ? '/sign-up' : '/dashboard'}
-                          className={`block w-full py-4 px-6 rounded-xl font-bold text-center transition-all duration-300 ${
+                          className={`block w-full py-3 px-5 rounded-xl font-semibold text-center transition-all duration-300 ${
                             tier.highlighted
-                              ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-black hover:from-yellow-300 hover:to-orange-400 shadow-lg'
-                              : 'glass border-2 border-white/20 hover:border-white/40 text-white hover:text-yellow-400'
+                              ? 'bg-gradient-to-r from-primary to-accent text-white hover:from-primary-dark hover:to-accent shadow-lg'
+                              : 'glass border-2 border-secondary/20 hover:border-secondary/40 text-foreground hover:text-primary'
                           }`}
                         >
                           {buttonConfig.text}
@@ -333,10 +334,10 @@ export default function PricingPage() {
                         whileTap={{ scale: 0.98 }}
                         onClick={buttonConfig.action}
                         disabled={planLoading}
-                        className={`w-full py-4 px-6 rounded-xl font-bold text-center transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        className={`w-full py-3 px-5 rounded-xl font-semibold text-center transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed ${
                           tier.highlighted
                             ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-black hover:from-yellow-300 hover:to-orange-400 shadow-lg'
-                            : 'glass border-2 border-white/20 hover:border-white/40 text-white hover:text-yellow-400'
+                            : 'glass border-2 border-secondary/20 hover:border-secondary/40 text-foreground hover:text-primary'
                         }`}
                       >
                         {planLoading ? 'Loading...' : buttonConfig.text}
@@ -348,8 +349,6 @@ export default function PricingPage() {
             ))}
           </div>
 
-          </div>
-
           {/* Footer section */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -358,17 +357,17 @@ export default function PricingPage() {
             className="text-center mt-20 mb-10"
           >
             <div className="glass inline-block px-8 py-6 rounded-2xl">
-              <p className="text-gray-300 text-medium">
+              <p className="text-foreground text-medium">
                 All plans include a 14-day money-back guarantee.
               </p>
               <div className="flex justify-center space-x-4 mt-4">
-                <div className="flex items-center space-x-2 text-green-400">
+                <div className="flex items-center space-x-2 text-success">
                   <CheckIcon />
                   <span className="text-white">No hidden fees</span>
                 </div>
-                <div className="flex items-center space-x-2 text-green-400">
+                <div className="flex items-center space-x-2 text-success">
                   <CheckIcon />
-                  <span className="text-white">Cancel anytime</span>
+                  <span className="text-foreground">Cancel anytime</span>
                 </div>
               </div>
             </div>

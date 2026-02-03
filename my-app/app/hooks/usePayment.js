@@ -25,7 +25,7 @@ export function usePayment() {
     try {
       const token = await getToken();
       
-      const response = await fetch(`${API_BASE_URL}/payments/subscribe`, {
+      const response = await fetch(`${API_BASE_URL}/api/payments/subscribe`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -57,7 +57,7 @@ export function usePayment() {
   // Verify payment signature
   const verifyPayment = useCallback(async (paymentDetails) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/payments/verify`, {
+      const response = await fetch(`${API_BASE_URL}/api/payments/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,7 +95,7 @@ export function usePayment() {
     try {
       const token = await getToken();
       
-      const response = await fetch(`${API_BASE_URL}/payments/cancel`, {
+      const response = await fetch(`${API_BASE_URL}/api/payments/cancel`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

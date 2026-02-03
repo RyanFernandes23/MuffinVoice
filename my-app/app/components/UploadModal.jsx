@@ -1,6 +1,13 @@
 'use client';
 import { useAuth } from '@clerk/nextjs';
-import { useState, useEffect } from 'react'; // Added useEffect
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion'; // Import motion and AnimatePresence
+import { FileText, Mic, X, UploadCloud, Trash2 } from 'lucide-react'; // Import icons
+
+const API_BASE_URL = typeof window !== 'undefined'
+  ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
+  : 'http://localhost:8000'; // Default for server-side
+
 
 export default function UploadModal({ isOpen, onClose, onUpload }) {
   const [file, setFile] = useState(null);
@@ -10,7 +17,8 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_bella');
 
-  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+  // MAX_FILE_SIZE now dynamically determined by plan limits
+  // (Assuming plan limits are fetched elsewhere or hardcoded in useUsage)
 
   // Available voices for initial processing
   const voices = [
@@ -22,36 +30,26 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     { id: 'em_alex', name: 'Alex (Male)' },
   ];
 
-  // FIX 2: Reset state when modal opens/closes
+  // Reset state when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
       setFile(null);
       setError(null);
       setIsUploading(false);
+      setSelectedVoice('af_bella'); // Reset voice selection
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  // Use a fixed max file size for now, as dynamic limits are not yet integrated here
+  const MAX_FILE_SIZE_MB = 100; // Default to 100MB as per plan limits in pricingTiers
+  const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 
   const validateAndSetFile = (selectedFile) => {
-    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
-    // FIX 3: Manual validation for Drag & Drop
-    const validTypes = ['application/pdf', 'application/epub+zip', 'text/plain', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-    // Note: checking extensions is sometimes safer than MIME types for weird windows setups, but this is a good baseline
     const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
     const validExtensions = ['pdf', 'epub', 'txt', 'docx'];
 
     if (selectedFile.size > MAX_FILE_SIZE) {
-      const maxSizeMB = MAX_FILE_SIZE / (1024 * 1024);
-      const maxSizeKB = MAX_FILE_SIZE / 1024;
-      let errorMessage;
-
-      if (maxSizeMB >= 1) {
-        errorMessage = `File is too large. Maximum size is ${maxSizeMB.toFixed(2)}MB.`;
-      } else {
-        errorMessage = `File is too large. Maximum size is ${maxSizeKB.toFixed(2)}KB.`;
-      }
-      setError(errorMessage);
+      setError(`File is too large. Maximum size is ${MAX_FILE_SIZE_MB}MB.`);
       setFile(null);
     } else if (validExtensions.includes(fileExtension)) {
       setFile(selectedFile);
@@ -74,131 +72,187 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     if (droppedFile) validateAndSetFile(droppedFile);
   };
 
-  // ... handleDragEnter, handleDragLeave, handleDragOver remain the same ...
   const handleDragEnter = (e) => { e.preventDefault(); setIsDragging(true); };
   const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
   const handleDragOver = (e) => { e.preventDefault(); };
 
   const handleUpload = async () => {
-    if (file) {
-      setIsUploading(true);
-      setError(null);
+    if (!file) {
+      setError("Please select a file to upload.");
+      return;
+    }
+    if (!selectedVoice) {
+      setError("Please select a voice.");
+      return;
+    }
 
-      const formData = new FormData();
-      formData.append('file', file);
+    setIsUploading(true);
+    setError(null);
 
-      try {
-        const token = await getToken();
-        // Ensure your backend is running on port 8000 and has CORS enabled for localhost:3000
-        const response = await fetch('http://localhost:8000/upload_file', {
-          method: 'POST',
-          headers: {
-            'X-User-ID': '123',
-            'voice': selectedVoice,
-            Authorization: `Bearer ${token}`,
-            // Do NOT set Content-Type header manually when using FormData
-          },
-          body: formData,
-        });
+    const formData = new FormData();
+    formData.append('file', file);
 
-        if (response.ok) {
-          const result = await response.json();
-          onUpload(file.name, result.voice, result.job_id);
-          onClose();
-        } else {
-          setError('Upload failed. Please try again.');
+    try {
+      const token = await getToken();
+      const response = await fetch(`${API_BASE_URL}/api/upload_file`, {
+        method: 'POST',
+        headers: {
+          'voice': selectedVoice,
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        onUpload(file.name, result.voice, result.job_id);
+        onClose();
+      } else {
+        let errorMsg = 'Upload failed: Unknown server error.';
+        try {
+          const errorData = await response.json();
+          console.error('Backend error response:', errorData); // Log for debugging
+          errorMsg = `Upload failed: ${errorData.detail || errorData.message || JSON.stringify(errorData)}`;
+        } catch (jsonError) {
+          // If JSON parsing fails, try to get raw text
+          const textError = await response.text();
+          console.error('Backend error (non-JSON):', textError); // Log for debugging
+          errorMsg = `Upload failed: ${textError || 'Unknown server error.'}`;
         }
-      } catch (error) {
-        console.error('Error:', error);
-        setError('Error uploading file. Is the backend running?');
-      } finally {
-        setIsUploading(false);
+        setError(errorMsg);
       }
+    } catch (error) {
+      console.error('Network error during upload:', error); // More specific logging
+      setError('Error uploading file. Please check your network connection and try again.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center backdrop-blur-sm">
-      <div className="bg-white rounded-lg p-8 shadow-2xl w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-6 text-gray-800">Upload a File</h2>
-        
-        <div className="mb-6">
-          <div 
-            className={`mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed rounded-md transition-colors ${
-              isDragging ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300'
-            }`}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-background/60 z-50 flex justify-center items-center backdrop-blur-sm px-4"
+        >
+          <motion.div
+            initial={{ scale: 0.9, y: 50 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 50 }}
+            transition={{ type: "spring", damping: 20, stiffness: 300 }}
+            className="glass-card rounded-2xl p-8 shadow-2xl w-full max-w-md relative border border-white/10"
           >
-            <div className="space-y-1 text-center">
-              {/* FIX 1: Show file name if selected, otherwise show drop prompt */}
-              {file ? (
-                <div className="text-gray-700">
-                  <svg className="mx-auto h-12 w-12 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <p className="mt-2 text-sm font-medium">{file.name}</p>
-                  <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                    className="mt-2 text-xs text-red-500 hover:text-red-700 underline"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <div className="flex text-sm text-gray-600 justify-center">
-                    <label htmlFor="file-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500">
-                      <span>Upload a file</span>
+            <button
+              onClick={onClose}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+            >
+              <X size={24} />
+            </button>
+
+            <h2 className="text-3xl font-bold mb-6 text-foreground text-center">Upload Document</h2>
+            
+            <div className="mb-6">
+              <div 
+                className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-colors duration-200 ${
+                  isDragging ? 'border-primary-glow bg-primary-glow/10' : 'border-gray-600 hover:border-gray-400 bg-gray-800'
+                }`}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
+                {file ? (
+                  <div className="flex flex-col items-center text-foreground">
+                    <FileText className="h-16 w-16 text-primary-glow mb-3" />
+                    <p className="text-lg font-medium text-white">{file.name}</p>
+                    <p className="text-sm text-gray-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                      className="mt-4 text-sm flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      <Trash2 size={16} /> Remove File
+                    </motion.button>
+                  </div>
+                ) : (
+                  <>
+                    <UploadCloud className="h-16 w-16 text-primary-glow mb-3" />
+                    <p className="text-white text-lg mb-2">Drag & drop your file here</p>
+                    <p className="text-gray-400 text-sm mb-3">or</p>
+                    <label htmlFor="file-upload" className="bg-gradient-to-r from-primary to-accent text-white px-6 py-2 rounded-full font-semibold shadow-lg hover:shadow-primary/30 transition-all cursor-pointer">
+                      <span>Browse Files</span>
                       <input id="file-upload" name="file-upload" type="file" className="sr-only" accept=".epub,.txt,.docx,.pdf" onChange={handleFileChange} />
                     </label>
-                    <p className="pl-1">or drag and drop</p>
-                  </div>
-                  <p className="text-xs text-gray-500">EPUB, PDF, DOCX, TXT</p>
-                  <p className="text-xs text-gray-500">Max size: { (MAX_FILE_SIZE / (1024 * 1024)) >= 1 ? `${(MAX_FILE_SIZE / (1024 * 1024)).toFixed(0)}MB` : `${(MAX_FILE_SIZE / 1024).toFixed(0)}KB` }</p>
-                </>
-              )}
+                    <p className="text-xs text-gray-500 mt-3">Supported: EPUB, PDF, DOCX, TXT (Max {MAX_FILE_SIZE_MB}MB)</p>
+                  </>
+                )}
+              </div>
+              {error && <p className="text-sm text-red-400 mt-3 text-center">{error}</p>}
             </div>
-          </div>
-          {error && <p className="text-sm text-red-500 mt-2 text-center">{error}</p>}
-        </div>
 
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-900 mb-2">Initial Voice</label>
-          <select
-            value={selectedVoice}
-            onChange={(e) => setSelectedVoice(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-gray-900"
-            disabled={isUploading}
-          >
-            {voices.map((voice) => (
-              <option key={voice.id} value={voice.id}>
-                {voice.name}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-gray-700 mt-1">Choose which voice to process first. Other voices can be generated later.</p>
-        </div>
+            <div className="mb-8">
+              <label htmlFor="voice-select" className="block text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                <Mic size={18} /> Initial Voice
+              </label>
+              <select
+                id="voice-select"
+                value={selectedVoice}
+                onChange={(e) => setSelectedVoice(e.target.value)}
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-glow focus:border-transparent text-white placeholder-gray-400 transition-colors"
+                disabled={isUploading}
+              >
+                {voices.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-2">Choose which voice to process first. Other voices can be generated later.</p>
+            </div>
 
-        <div className="flex justify-end space-x-4">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300" disabled={isUploading}>Cancel</button>
-          <button 
-            onClick={handleUpload} 
-            className={`px-4 py-2 rounded-md flex items-center justify-center min-w-[100px] ${
-              !file || isUploading ? 'bg-yellow-400 cursor-not-allowed' : 'bg-yellow-400 hover:bg-yellow-500'
-            }`}
-            disabled={!file || isUploading}
-          >
-             {isUploading ? 'Uploading...' : 'Upload'}
-          </button>
-        </div>
-      </div>
-    </div>
+            <div className="flex justify-end space-x-4">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={onClose}
+                className="px-6 py-2.5 rounded-full glass-button text-foreground border border-gray-600 hover:border-white/40 transition-colors"
+                disabled={isUploading}
+              >
+                Cancel
+              </motion.button>
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleUpload} 
+                className={`px-6 py-2.5 rounded-full font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${
+                  !file || isUploading
+                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-primary to-accent text-white hover:shadow-primary/30'
+                }`}
+                disabled={!file || isUploading}
+              >
+                {isUploading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud size={20} /> Upload
+                  </>
+                )}
+              </motion.button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

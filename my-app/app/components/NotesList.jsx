@@ -137,7 +137,7 @@ export default function NotesList({
       <div className="flex items-center justify-center h-96" role="status" aria-live="polite">
         <div className="text-center">
           <div className="animate-spin text-4xl mb-3" aria-hidden="true">⏳</div>
-          <p className="text-gray-600">Loading notes...</p>
+          <p className="text-foreground">Loading notes...</p>
         </div>
       </div>
     );
@@ -151,7 +151,7 @@ export default function NotesList({
           Search notes
         </label>
         <FaSearch 
-          className="absolute left-3 top-3 text-gray-400 pointer-events-none" 
+          className="absolute left-3 top-3 text-foreground pointer-events-none" 
           aria-hidden="true"
         />
         <input
@@ -160,13 +160,13 @@ export default function NotesList({
           placeholder="Search notes... (Ctrl+F)"
           defaultValue={searchTerm}
           onChange={(e) => debouncedSetSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-yellow-400 focus:ring-2 focus:ring-yellow-100 transition-all"
+          className="w-full pl-10 pr-10 py-2 border border-secondary rounded-lg focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
           aria-label="Search notes"
         />
         {searchTerm && (
           <button
             onClick={clearSearch}
-            className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 transition-colors"
+            className="absolute right-3 top-3 text-foreground hover:text-primary transition-colors"
             aria-label="Clear search"
             type="button"
           >
@@ -177,7 +177,7 @@ export default function NotesList({
 
       {/* Notes Count */}
       <div 
-        className="text-sm text-gray-600 mb-3"
+        className="text-sm text-foreground mb-3"
         role="status"
         aria-live="polite"
       >
@@ -193,7 +193,7 @@ export default function NotesList({
       >
         {filteredNotes.length === 0 ? (
           <div 
-            className="text-center py-8 text-gray-500"
+            className="text-center py-8 text-foreground"
             role="status"
           >
             <p className="text-sm">
@@ -207,7 +207,7 @@ export default function NotesList({
             <div
               key={note.id}
               onClick={() => handleNoteClick(note.timestamp)}
-              className="bg-white border border-gray-200 rounded-lg p-3 hover:border-yellow-400 hover:bg-yellow-50 transition-all cursor-pointer group focus-within:ring-2 focus-within:ring-yellow-200"
+              className="bg-background border border-secondary rounded-lg p-3 hover:border-primary hover:bg-primary/5 transition-all cursor-pointer group focus-within:ring-2 focus-within:ring-primary/40"
               role="listitem"
               tabIndex={0}
               onKeyDown={(e) => {
@@ -221,28 +221,27 @@ export default function NotesList({
               {/* Header: Timestamp and Date */}
               <div className="flex justify-between items-start mb-2">
                 <span 
-                  className="font-semibold text-yellow-600 text-sm"
+                  className="font-semibold text-primary text-sm"
                   aria-label={`Timestamp: ${formatTime(note.timestamp)}`}
                 >
                   ⏱ {formatTime(note.timestamp)}
                 </span>
-                <time 
-                  className="text-xs text-gray-500"
-                  dateTime={note.createdAt}
-                >
-                  {formatDate(note.createdAt)}
+                                  <time 
+                                    className="text-xs text-foreground"
+                                    dateTime={note.createdAt}
+                                  >                  {formatDate(note.createdAt)}
                 </time>
               </div>
 
               {/* Note Text */}
-              <p className="text-sm text-gray-800 mb-2 line-clamp-2 whitespace-pre-wrap break-words">
+              <p className="text-sm text-foreground mb-2 line-clamp-2 whitespace-pre-wrap break-words">
                 {note.userNote}
               </p>
 
               {/* Subtitle Preview */}
               {note.subtitleText && (
                 <div 
-                  className="text-xs text-gray-600 bg-gray-50 p-2 rounded mb-3 line-clamp-2 italic border-l-2 border-yellow-200"
+                  className="text-xs text-foreground bg-secondary p-2 rounded mb-3 line-clamp-2 italic border-l-2 border-primary"
                   aria-label="Transcript context"
                 >
                   <span className="sr-only">Transcript context: </span>
@@ -261,7 +260,7 @@ export default function NotesList({
                 >
                   <button
                     onClick={(e) => handleEditClick(e, note)}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 focus:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-300 transition-colors"
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-primary/10 text-primary rounded hover:bg-primary/20 focus:bg-primary/20 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors"
                     aria-label={`Edit note at ${formatTime(note.timestamp)}`}
                     type="button"
                   >
@@ -270,7 +269,7 @@ export default function NotesList({
                   </button>
                   <button
                     onClick={(e) => handleDeleteClick(e, note.id)}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 focus:bg-red-200 focus:outline-none focus:ring-2 focus:ring-red-300 transition-colors"
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-error/10 text-error rounded hover:bg-error/20 focus:bg-error/20 focus:outline-none focus:ring-2 focus:ring-error/30 transition-colors"
                     aria-label={`Delete note at ${formatTime(note.timestamp)}`}
                     type="button"
                   >
@@ -283,21 +282,21 @@ export default function NotesList({
               {/* Delete Confirmation */}
               {deletingNoteId === note.id && (
                 <div 
-                  className="mt-3 p-3 bg-red-50 border border-red-200 rounded"
+                  className="mt-3 p-3 bg-error/5 border border-error/20 rounded"
                   role="dialog"
                   aria-labelledby={`delete-confirm-${note.id}`}
                   aria-modal="true"
                 >
                   <p 
                     id={`delete-confirm-${note.id}`}
-                    className="text-sm text-red-700 mb-2 font-medium"
+                    className="text-sm text-error mb-2 font-medium"
                   >
                     Delete this note?
                   </p>
                   <div className="flex gap-2">
                     <button
                       onClick={(e) => confirmDelete(e, note.id)}
-                      className="flex-1 px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 focus:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-300 transition-colors font-medium"
+                      className="flex-1 px-3 py-1 text-xs bg-error text-white rounded hover:bg-error/80 focus:bg-error/80 focus:outline-none focus:ring-2 focus:ring-error/30 transition-colors font-medium"
                       autoFocus
                       type="button"
                     >
@@ -305,7 +304,7 @@ export default function NotesList({
                     </button>
                     <button
                       onClick={cancelDelete}
-                      className="flex-1 px-3 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400 focus:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-400 transition-colors font-medium"
+                      className="flex-1 px-3 py-1 text-xs bg-secondary text-foreground rounded hover:bg-secondary-dark focus:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-secondary/40 transition-colors font-medium"
                       type="button"
                     >
                       Cancel

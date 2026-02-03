@@ -1,9 +1,12 @@
 'use client';
 
 import { useUsage } from '../hooks/useUsage';
+import Link from 'next/link';
+import { motion } from 'framer-motion';
+import { ArrowUpRight, AlertTriangle } from 'lucide-react'; // Import AlertTriangle
 
 export default function UsageProgress() {
-  const { usageData, loading, error, percentage } = useUsage();
+  const { usageData, loading, error, percentage, isNearLimit } = useUsage(); // Destructure isNearLimit
 
   if (loading) {
     return (
@@ -34,42 +37,31 @@ export default function UsageProgress() {
     return 'bg-green-500';
   };
 
-  const getPlanColor = () => {
-    switch (usageData.plan_name) {
-      case 'Professional':
-        return 'text-purple-400';
-      case 'Creator':
-        return 'text-blue-400';
-      default:
-        return 'text-gray-400';
-    }
-  };
-
   return (
-    <div className="flex items-center space-x-3 bg-gray-900 rounded-lg px-3 py-2 min-w-[200px]">
-      <div className="flex flex-col flex-1">
-        <div className="flex items-center justify-between mb-1">
-          <span className={`text-xs font-semibold ${getPlanColor()}`}>
-            {usageData.plan_name}
+    <div className="flex flex-col gap-2 w-52 p-4 glass-card rounded-xl border border-white/10">
+        <div className="flex justify-between items-center">
+          <span className="text-xs text-gray-300">
+            Used: {formatNumber(usageData.monthly_char_used)} / {formatNumber(usageData.monthly_char_limit)}
           </span>
-          <span className="text-xs text-gray-400">
-            {formatNumber(usageData.monthly_char_used)} / {formatNumber(usageData.monthly_char_limit)}
+          <span className="text-sm font-bold text-white flex items-center gap-1">
+            {isNearLimit && <AlertTriangle className="w-4 h-4 text-yellow-400" />}
+            {percentage}%
           </span>
         </div>
-        
-        <div className="w-full bg-gray-700 rounded-full h-2">
-          <div 
-            className={`h-2 rounded-full transition-all duration-300 ${getProgressColor()}`}
-            style={{ width: `${Math.min(percentage, 100)}%` }}
+        <div className="w-full bg-white/10 rounded-full h-2">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.min(percentage, 100)}%` }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            className={`h-2 rounded-full ${getProgressColor()}`}
           />
         </div>
-        
-        <div className="flex items-center justify-between mt-1">
-          <span className="text-xs text-gray-500">
-            {percentage}% used
-          </span>
-        </div>
-      </div>
+        {isNearLimit && (
+          <p className="text-xs text-yellow-400 mt-1">
+            You are near your usage limit!
+          </p>
+        )}
     </div>
   );
 }
+

@@ -36,21 +36,26 @@ engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
 # --- DB Update Function ---
 def update_db_status(job_id: str, status: str):
     """
-    Syncs the final status to the SQL database.
+    Syncs the final status to the SQL database, or removes the notebook if failed.
     """
     try:
         with Session(engine) as session:
             statement = select(Notebook).where(Notebook.job_id == job_id)
             notebook = session.exec(statement).first()
             if notebook:
-                notebook.status = status
-                session.add(notebook)
-                session.commit()
-                logging.info(f"[DB-SYNC] Updated job {job_id} to {status}")
+                if status == "failed":
+                    session.delete(notebook)
+                    session.commit()
+                    logging.info(f"[DB-SYNC] Deleted failed job {job_id} from DB.")
+                else: # Only update status for non-failed final states (e.g., "completed")
+                    notebook.status = status
+                    session.add(notebook)
+                    session.commit()
+                    logging.info(f"[DB-SYNC] Updated job {job_id} to {status}")
             else:
-                logging.warning(f"[DB-SYNC] Job {job_id} not found in DB")
+                logging.warning(f"[DB-SYNC] Job {job_id} not found in DB for status update/deletion.")
     except Exception as e:
-        logging.error(f"[DB-SYNC] Failed to update DB: {e}")
+        logging.error(f"[DB-SYNC] Failed to update/delete DB for {job_id}: {e}")
 
 
 # --- Redis Update ---
@@ -62,6 +67,11 @@ def update_job_status(job_id, status):
     # 2. Update SQL (Cold Data) - Only on completion or failure
     if status in ["completed", "failed"]:
         update_db_status(job_id, status)
+
+@dramatiq.actor
+def complete_job_status(job_id, final_status):
+    update_job_status(job_id, final_status)
+    logging.info(f"Job {job_id} definitively {final_status}.")
 
 
 # --- Middleware Setup ---
@@ -109,7 +119,7 @@ def process_speeches(user_id, job_id, voice):
             ContentType="application/json",
         )
 
-        previous = None
+        current_pipeline = None
         total_batches = (len(chunks) + batch_size - 1) // batch_size
 
         for batch_index, batch in enumerate(chunks_in_batches(chunks, batch_size)):
@@ -125,28 +135,42 @@ def process_speeches(user_id, job_id, voice):
                 for i, chunk in enumerate(batch)
             )
 
-            if previous:
-                previous = pipeline(previous, g)
+            if current_pipeline:
+                current_pipeline = pipeline(current_pipeline, g)
             else:
-                previous = g
+                current_pipeline = g
 
-        if previous:
-            previous.add_completion_callback(
+        if current_pipeline:
+            # Main processing pipeline including finalization
+            main_pipeline = pipeline(
+                current_pipeline,
                 finalize_manifest.message(user_id, job_id, voice)
             )
-            previous.run()
+
+            # Define a success callback for the main pipeline
+            main_pipeline.add_completion_callback(
+                complete_job_status.message(job_id, "completed")
+            )
+
+            # Define a failure callback for the main pipeline (if any actor in it fails definitively)
+            main_pipeline.add_failure_callback(
+                complete_job_status.message(job_id, "failed")
+            )
+            
+            main_pipeline.run()
 
         logging.info(
-            f"[TASK] Queued finalize_manifest callback for {voice} (job {job_id})"
+            f"[TASK] Queued processing pipeline with callbacks for {voice} (job {job_id})"
         )
 
     except Exception as e:
-        update_job_status(job_id, "failed")
-        logging.error(f"process_speeches failed for job {job_id}: {e}", exc_info=True)
+        # This catch block is for errors occurring *before* the pipeline is run (e.g., S3 read of chunks.json)
+        complete_job_status.send(job_id, "failed") # Use the actor to update status consistently
+        logging.error(f"process_speeches initial setup failed for job {job_id}: {e}", exc_info=True)
         raise
 
 
-@dramatiq.actor(store_results=True)
+@dramatiq.actor(store_results=True, max_retries=5, min_backoff=1000)
 def process_single_speech(index, text, voice, user_id, job_id):
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}"

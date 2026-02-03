@@ -41,7 +41,7 @@ class UserSubscription(SQLModel, table=True):
     )  # explorer, creator, professional
 
     # Status Tracking
-    status: str = Field(default="active")  # active, past_due, cancelled, expired
+    status: str = Field(default="active") 
     current_period_start: Optional[datetime] = Field(default=None)
     current_period_end: Optional[datetime] = Field(
         default=None

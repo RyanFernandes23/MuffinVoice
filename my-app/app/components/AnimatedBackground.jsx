@@ -72,6 +72,7 @@ export default function AnimatedBackground() {
       {/* Mouse follower gradient */}
       <motion.div
         className="absolute w-32 h-32 rounded-full bg-gradient-to-r from-yellow-300/30 to-orange-400/30 blur-2xl"
+        suppressHydrationWarning={true}
         animate={{
           x: mousePosition.x - 64,
           y: mousePosition.y - 64,

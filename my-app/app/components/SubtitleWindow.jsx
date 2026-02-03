@@ -48,7 +48,7 @@ export default function SubtitleWindow({ subtitles, currentTime, onClose, durati
   const isAudioEnd = duration > 0 && Math.abs(currentTime - duration) < 0.1;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-md z-50 flex items-center justify-center">
+    <div className="fixed inset-0 bg-background/50 backdrop-blur-md z-50 flex items-center justify-center">
       <div 
         ref={scrollContainerRef} 
         className="w-full p-8 overflow-auto h-full pb-40"
@@ -67,7 +67,7 @@ export default function SubtitleWindow({ subtitles, currentTime, onClose, durati
                   className={`text-2xl leading-relaxed transition-colors duration-200 ${
                     isActive 
                       ? 'text-white font-extrabold' 
-                      : 'text-gray-300 opacity-50'
+                      : 'text-foreground opacity-50'
                   }`}
                   onClick={() => handleDoubleClick(line.start)}
                 >
@@ -76,7 +76,7 @@ export default function SubtitleWindow({ subtitles, currentTime, onClose, durati
               );
             })
           ) : (
-            <p className="text-gray-500 text-lg italic">No subtitles available.</p>
+            <p className="text-foreground text-lg italic">No subtitles available.</p>
           )}
           <div
             id={isAudioEnd ? 'active-subtitle' : null}
@@ -90,13 +90,13 @@ export default function SubtitleWindow({ subtitles, currentTime, onClose, durati
           </div>
         </div>
       </div>
-      <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+      <button onClick={onClose} className="absolute top-4 right-4 text-foreground hover:text-primary">
         <FaTimes />
       </button>
       {!isAutoScrolling && (
         <button 
           onClick={handleFollowClick} 
-          className="absolute top-4 left-4 bg-yellow-400 text-black px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500 transition duration-300 flex items-center z-50"
+          className="absolute top-4 left-4 bg-primary text-white px-4 py-2 rounded-lg font-semibold hover:bg-primary-dark transition duration-300 flex items-center z-50"
         >
           <FaCrosshairs className="mr-2" />
           Get back to playhead position

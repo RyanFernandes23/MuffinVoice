@@ -18,14 +18,13 @@ from src.api.utils import (get_job_status, get_session,
 from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
-notebooks_router = APIRouter(tags=["notebooks", "tts", "s3"])
+notebooks_router = APIRouter(prefix="/api", tags=["notebooks", "tts", "s3"])
 
 
 @notebooks_router.post("/upload_file")
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user_id: str = Header(..., alias="X-User-ID"),
     voice: str = Header("af_bella", alias="voice"),
     token_payload=Depends(clerk_auth),
     session: Session = Depends(get_session),

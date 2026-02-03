@@ -11,7 +11,7 @@ from src.api.deps import clerk_auth, get_current_user, get_session
 from src.api.schema import SubscriptionEvent, UserSubscription
 from src.utils.payment_client import razorpay_client
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+payments_router = APIRouter(prefix="/api/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
 
 RAZORPAY_WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
@@ -64,7 +64,7 @@ def get_plan_id(plan_name: str) -> str:
 # ------------------------------
 
 
-@router.post("/subscribe", response_model=SubscribeResponse)
+@payments_router.post("/subscribe", response_model=SubscribeResponse)
 async def create_subscription(
     req: SubscribeRequest,
     session: Session = Depends(get_session),
@@ -144,7 +144,7 @@ async def create_subscription(
 # ------------------------------
 
 
-@router.post("/verify")
+@payments_router.post("/verify")
 async def verify_payment(req: VerifyPaymentRequest):
     try:
         razorpay_client.utility.verify_payment_signature(
@@ -164,7 +164,7 @@ async def verify_payment(req: VerifyPaymentRequest):
 # ------------------------------
 
 
-@router.post("/webhook", response_model=WebhookResponse)
+@payments_router.post("/webhook", response_model=WebhookResponse)
 async def handle_webhook(request: Request, session: Session = Depends(get_session)):
     body_bytes = await request.body()
     signature = request.headers.get("X-Razorpay-Signature")
@@ -243,7 +243,7 @@ async def handle_webhook(request: Request, session: Session = Depends(get_sessio
 
 # Cancel Subscription
 
-@router.post("/cancel")
+@payments_router.post("/cancel")
 async def cancel_subscription(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),

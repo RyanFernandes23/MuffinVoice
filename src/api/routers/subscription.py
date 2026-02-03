@@ -11,7 +11,7 @@ from src.api.utils import (DEFAULT_LIMIT, EXPLORER_PLAN_ID,
                            SUBSCRIPTION_LIMITS,
                            get_or_create_explorer_subscription)
 
-subscription_router = APIRouter(tags=["subscription"])
+subscription_router = APIRouter(prefix="/api/subscription", tags=["subscription"])
 
 
 class UsageResponse(BaseModel):
