@@ -1,24 +1,27 @@
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import date, datetime, timezone
+from typing import Dict, List, Optional
+from decimal import Decimal
 
-from sqlalchemy import JSON
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlalchemy import Column, JSON
+from sqlmodel import Field, Session, SQLModel, create_engine, select, Relationship
 
 
 class Notebook(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: str = Field(index=True)  # The Clerk User ID
+    user_id: str = Field(index=True, foreign_key="user.user_id")  # The Clerk User ID
     job_id: str = Field(unique=True, index=True)
     title: str
     voice: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = Field(default="processing")
 
+    user: Optional["User"] = Relationship(back_populates="notebooks")
+
 
 class Note(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    user_id: str = Field(index=True)
+    user_id: str = Field(index=True, foreign_key="user.user_id")
     job_id: str = Field(index=True)
     timestamp: float  # Audio timestamp in seconds
     user_note: str  # The note text
@@ -28,3 +31,135 @@ class Note(SQLModel, table=True):
 
     def __repr__(self) -> str:
         return f"<Note user_id={self.user_id} job_id={self.job_id} timestamp={self.timestamp}>"
+
+    user: Optional["User"] = Relationship(back_populates="notes")
+
+
+class User(SQLModel, table=True):
+    user_id: str = Field(primary_key=True, max_length=255)
+    username: str = Field(unique=True, max_length=255, index=True)
+    email: str = Field(unique=True, max_length=255, index=True)
+    password_hash: Optional[str] = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    notebooks: List["Notebook"] = Relationship(back_populates="user")
+    notes: List["Note"] = Relationship(back_populates="user")
+    payments: List["Payment"] = Relationship(back_populates="user")
+    subscriptions: List["Subscription"] = Relationship(back_populates="user")
+    payment_events: List["PaymentEvent"] = Relationship(back_populates="user")
+    customer: Optional["Customer"] = Relationship(back_populates="user")
+
+
+class Customer(SQLModel, table=True):
+    customer_id: Optional[str] = Field(default=None, max_length=255)
+    user_id: str = Field(primary_key=True, max_length=255, foreign_key="user.user_id")
+    razorpay_customer_id: str = Field(max_length=255, unique=True, index=True)
+    email: str = Field(max_length=255)
+    contact: Optional[str] = Field(default=None, max_length=20)
+    name: Optional[str] = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    user: User = Relationship(back_populates="customer")
+
+
+class Plan(SQLModel, table=True):
+    plan_id: str = Field(primary_key=True, max_length=255)
+    razorpay_plan_id: Optional[str] = Field(
+        default=None, max_length=255, unique=True, index=True
+    )  # Added field
+    name: str = Field(unique=True, max_length=255)
+    description: Optional[str] = Field(default=None)
+    price: Decimal = Field(max_digits=10, decimal_places=2)
+    currency: str = Field(max_length=3)
+    duration_days: int
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    payments: List["Payment"] = Relationship(back_populates="plan")
+    subscriptions: List["Subscription"] = Relationship(back_populates="plan")
+
+
+class Payment(SQLModel, table=True):
+    payment_id: str = Field(primary_key=True, max_length=255)
+    user_id: str = Field(foreign_key="user.user_id", index=True)
+    plan_id: Optional[str] = Field(default=None, foreign_key="plan.plan_id", index=True)
+
+    amount: Decimal = Field(max_digits=10, decimal_places=2)
+    currency: str = Field(max_length=3)
+    status: str = Field(max_length=50)
+
+    gateway_payment_id: Optional[str] = Field(default=None, max_length=255)
+    gateway_order_id: Optional[str] = Field(default=None, max_length=255)
+    gateway_signature: Optional[str] = Field(default=None, max_length=512)
+    gateway_response_code: Optional[str] = Field(default=None, max_length=100)
+    gateway_response_message: Optional[str] = Field(default=None)
+    payment_method: Optional[str] = Field(default=None, max_length=50)
+
+    transaction_timestamp: datetime = Field()
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user: User = Relationship(back_populates="payments")
+    plan: Optional[Plan] = Relationship(back_populates="payments")
+    payment_events: List["PaymentEvent"] = Relationship(back_populates="payment")
+    subscription: Optional["Subscription"] = Relationship(back_populates="payment")
+
+
+class Subscription(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    razorpay_subscription_id: str = Field(max_length=255, unique=True, index=True)
+    user_id: str = Field(foreign_key="user.user_id", index=True)
+    plan_id: str = Field(foreign_key="plan.plan_id", index=True)
+    payment_id: Optional[str] = Field(
+        default=None, foreign_key="payment.payment_id", index=True
+    )
+
+    start_date: date = Field()
+    end_date: date = Field()
+    status: str = Field(max_length=50)
+    auto_renew_enabled: bool = Field(default=False)
+    cancelled_at: Optional[datetime] = Field(default=None)
+    cancel_reason: Optional[str] = Field(default=None)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user: User = Relationship(back_populates="subscriptions")
+    plan: Plan = Relationship(back_populates="subscriptions")
+    payment: Optional[Payment] = Relationship(back_populates="subscription")
+    payment_events: List["PaymentEvent"] = Relationship(back_populates="subscription")
+
+
+class PaymentEvent(SQLModel, table=True):
+    event_id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="user.user_id", index=True)
+    payment_id: Optional[str] = Field(
+        default=None, foreign_key="payment.payment_id", index=True
+    )
+    subscription_id: Optional[str] = Field(
+        default=None, foreign_key="subscription.razorpay_subscription_id", index=True
+    )
+
+    event_type: str = Field(max_length=100)
+    event_description: Optional[str] = Field(default=None)
+    error_code: Optional[str] = Field(default=None, max_length=100)
+    error_details: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
+
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    is_resolved: bool = Field(default=False)
+    resolved_at: Optional[datetime] = Field(default=None)
+    resolved_by: Optional[str] = Field(default=None, max_length=255)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user: User = Relationship(back_populates="payment_events")
+    payment: Optional[Payment] = Relationship(back_populates="payment_events")
+    subscription: Optional[Subscription] = Relationship(back_populates="payment_events")

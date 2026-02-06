@@ -1,91 +1,8 @@
 5. if kokoro not available then processing should not keep spinning. we need to throw error please try again.
-the error that you'll see at dramatiq:
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\resources\audio\speech.py", line 103, in create  
-    return self._post(
-           ^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1259, in post
-    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
-                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1047, in request
-    raise self._make_status_error_from_response(err.response) from None
-openai.NotFoundError: The endpoint pretelephonic-loralee-resignedly.ngrok-free.dev is offline.
-
-ERR_NGROK_3200
-[2025-12-15 21:17:19,630] [PID 11968] [Thread-7] [dramatiq.worker.WorkerThread] [ERROR] Failed to process message process_single_speech(6, 'that line represents a temporary preload or transition effect that moves slightly ahead of the red dot.', 'af_bella', 'user_36blEblebtAcL5YRUpMNh1bHqDP', '50f4df00-3159-4904-ad57-023213afe77c') with unhandled exception.
-Traceback (most recent call last):
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\dramatiq\worker.py", line 487, in process_message       
-    res = actor(*message.args, **message.kwargs)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\dramatiq\actor.py", line 185, in __call__
-    return self.fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\src\TTS_Workers\tasks.py", line 144, in process_single_speech
-    with tts_generator(text, voice) as speech_output:
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_response.py", line 626, in __enter__
-    self.__response = self._request_func()
-                      ^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\resources\audio\speech.py", line 103, in create  
-    return self._post(
-           ^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1259, in post
-    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
-                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1047, in request
-    raise self._make_status_error_from_response(err.response) from None
-openai.NotFoundError: The endpoint pretelephonic-loralee-resignedly.ngrok-free.dev is offline.
-
-ERR_NGROK_3200
-[2025-12-15 21:17:19,633] [PID 11968] [Thread-7] [dramatiq.middleware.retries.Retries] [INFO] Retrying message 'b8ab0998-d1e9-4af6-a73f-b87f88fde984' in 460419 milliseconds.
-[2025-12-15 21:20:09,072] [PID 11968] [Thread-7] [httpx] [INFO] HTTP Request: POST https://pretelephonic-loralee-resignedly.ngrok-free.dev/v1/audio/speech "HTTP/1.1 404 Not Found"
-[2025-12-15 21:20:09,072] [PID 11968] [Thread-7] [root] [ERROR] [ERROR] process_single_speech index=7: The endpoint pretelephonic-loralee-resignedly.ngrok-free.dev is offline.
-
-ERR_NGROK_3200
-Traceback (most recent call last):
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\src\TTS_Workers\tasks.py", line 144, in process_single_speech
-    with tts_generator(text, voice) as speech_output:
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_response.py", line 626, in __enter__
-    self.__response = self._request_func()
-                      ^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\resources\audio\speech.py", line 103, in create  
-    return self._post(
-           ^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1259, in post
-    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
-                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1047, in request
-    raise self._make_status_error_from_response(err.response) from None
-openai.NotFoundError: The endpoint pretelephonic-loralee-resignedly.ngrok-free.dev is offline.
-
-ERR_NGROK_3200
-[2025-12-15 21:20:09,072] [PID 11968] [Thread-7] [dramatiq.worker.WorkerThread] [ERROR] Failed to process message process_single_speech(7, "it's a ui animation that helps your eyes follow the motion of the playhead smoothly.", 'af_bella', 'user_36blEblebtAcL5YRUpMNh1bHqDP', '50f4df00-3159-4904-ad57-023213afe77c') with unhandled exception.
-Traceback (most recent call last):
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\dramatiq\worker.py", line 487, in process_message       
-    res = actor(*message.args, **message.kwargs)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\dramatiq\actor.py", line 185, in __call__
-    return self.fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\src\TTS_Workers\tasks.py", line 144, in process_single_speech
-    with tts_generator(text, voice) as speech_output:
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_response.py", line 626, in __enter__
-    self.__response = self._request_func()
-                      ^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\resources\audio\speech.py", line 103, in create  
-    return self._post(
-           ^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1259, in post
-    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
-                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Hp\OneDrive\Desktop\WikiVoice\venv\Lib\site-packages\openai\_base_client.py", line 1047, in request
-    raise self._make_status_error_from_response(err.response) from None
-openai.NotFoundError: The endpoint pretelephonic-loralee-resignedly.ngrok-free.dev is offline.
-
-ERR_NGROK_3200
-[2025-12-15 21:20:09,072] [PID 11968] [Thread-7] [dramatiq.middleware.retries.Retries] [INFO] Retrying message 'd3034d29-1a78-421f-925f-42de9e45d53b' in 877980 milliseconds.
 --MVP:
 8. think on adding paywall for enpoints.
 9. voice polling logic improvement. poll continuous when something is processing.
-10. deleting the notes in postgres after deleting notebook.
+10. deleting the notes in postgres after deleting notebook. on cascade logic.
 
 --Stable release:
 11. Ads
@@ -93,6 +10,8 @@ ERR_NGROK_3200
 13. webpages support.
 14. typing text support.
 15. ocr support.
+16. user notification via email for subscription activated (either via razorpay or manually)
+
 
 ngrok config:
 -- localhost 8000 at raytech expose

@@ -98,9 +98,19 @@ function PricingCard({ plan, onSubscribe }) { // Add onSubscribe prop
 }
 
 import toast from 'react-hot-toast'; // Add this import
+import { useUser } from "@clerk/nextjs"; // Import useUser
 
 export default function PricingPage() {
-  const handleSubscribe = async (planName) => {
+  const { user, isSignedIn } = useUser(); // Use the useUser hook
+
+  const handleSubscribe = async (planName, price) => { // Added price parameter
+    if (!isSignedIn || !user || !user.id) {
+      toast.error("Please sign in to subscribe.");
+      return;
+    }
+
+    const userId = user.id;
+
     // Show loading toast
     const loadingToastId = toast.loading(`Initiating ${planName} subscription...`);
 
@@ -109,7 +119,10 @@ export default function PricingPage() {
       const response = await fetch('/api/payment/create-subscription', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan_name: planName.toLowerCase() }) // Ensure consistent casing
+        body: JSON.stringify({ 
+            plan_name: planName.toLowerCase(),
+            user_id: userId, // Pass the user_id from Clerk
+        }) 
       });
 
       if (!response.ok) {
@@ -118,14 +131,19 @@ export default function PricingPage() {
       }
 
       const data = await response.json();
-      const { subscription_id, key_id } = data;
+      const { razorpay_subscription_id, key_id, amount, currency } = data; // Destructure amount and currency
+
+      // Razorpay expects amount in paise (e.g., 500 for Rs 5)
+      const amountInPaise = Math.round(parseFloat(amount) * 100);
 
       // 2. Open Razorpay Checkout
       const options = {
-        key: key_id, // Your Razorpay Key ID
-        subscription_id: subscription_id,
+        key: key_id, // Your Razorpay Key ID from backend
+        subscription_id: razorpay_subscription_id,
         name: 'WikiVoice', // Your App Name
         description: `${planName} Plan Subscription`,
+        amount: amountInPaise, // Amount in paise
+        currency: currency, // Currency from backend
         handler: function (response) {
           toast.success('Payment successful! Your subscription is being activated.', { id: loadingToastId });
           // In a real application, you might want to redirect the user or update their subscription status in the UI
@@ -134,14 +152,13 @@ export default function PricingPage() {
         modal: {
           ondismiss: function() {
             toast.dismiss(loadingToastId);
-            toast.error('Payment process cancelled.', { id: loadingToastId });
+            toast.error('Payment process cancelled.'); // No need for id here
           }
         },
         prefill: {
-          // You might prefill user details if you have them from your authentication context
-          // name: 'John Doe',
-          // email: 'john.doe@example.com',
-          // contact: '9999999999'
+          name: user.fullName || "", // Prefill user name
+          email: user.primaryEmailAddress?.emailAddress || "", // Prefill user email
+          // contact: '9999999999' // If you have contact info
         },
         theme: {
           "color": "#6366F1" // Tailwind purple-500, or your theme color
@@ -185,4 +202,5 @@ export default function PricingPage() {
     </div>
   );
 }
+
 
