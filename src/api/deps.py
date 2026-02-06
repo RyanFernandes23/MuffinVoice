@@ -1,16 +1,13 @@
-# src/api/deps.py
 import logging
 import os
 from typing import List
 
-import razorpay
 from fastapi import Depends, HTTPException
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from sqlmodel import Session, select
 
 from src.api.schema import Notebook
 from src.api.utils import get_session
-from src.TTS_Workers.tasks import get_s3_client
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -34,41 +31,6 @@ if not jwks_url:
 
 clerk_config = ClerkConfig(jwks_url=jwks_url)
 clerk_auth = ClerkHTTPBearer(config=clerk_config)
-
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
-if not RAZORPAY_KEY_ID:
-    logger.warning("RAZORPAY_KEY_ID environment variable is not set")
-
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
-if not RAZORPAY_KEY_SECRET:
-    logger.warning("RAZORPAY_KEY_SECRET environment variable is not set")
-
-RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
-if not RAZORPAY_WEBHOOK_SECRET:
-    logger.warning("RAZORPAY_WEBHOOK_SECRET environment variable is not set")
-
-RAZORPAY_CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID")
-if not RAZORPAY_CREATOR_PLAN_ID:
-    logger.warning("RAZORPAY_CREATOR_PLAN_ID environment variable is not set")
-
-RAZORPAY_PROFESSIONAL_PLAN_ID = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID")
-if not RAZORPAY_PROFESSIONAL_PLAN_ID:
-    logger.warning("RAZORPAY_PROFESSIONAL_PLAN_ID environment variable is not set")
-
-RAZORPAY_CREATOR_SUB_ID = os.getenv("RAZORPAY_CREATOR_SUB_ID")
-if not RAZORPAY_CREATOR_SUB_ID:
-    logger.warning("RAZORPAY_CREATOR_SUB_ID environment variable is not set")
-
-RAZORPAY_PROFESSIONAL_SUB_ID = os.getenv("RAZORPAY_PROFESSIONAL_SUB_ID")
-if not RAZORPAY_PROFESSIONAL_SUB_ID:
-    logger.warning("RAZORPAY_PROFESSIONAL_SUB_ID environment variable is not set")
-
-razorpay_client = None
-if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
-    razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
-    logger.info("Razorpay client initialized successfully")
-else:
-    logger.warning("Razorpay client not initialized - missing credentials")
 
 
 async def get_current_user(token_payload=Depends(clerk_auth)) -> str:

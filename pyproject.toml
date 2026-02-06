@@ -31,4 +31,6 @@ dependencies = [
     "chonkie>=0.3.0",
     "numpy>=2.4.0",
     "wtpsplit==2.1.6",
+    "pycln>=2.6.0",
+    "pydantic-settings>=2.12.0",
 ]
