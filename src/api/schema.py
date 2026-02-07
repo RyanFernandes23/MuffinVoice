@@ -84,7 +84,11 @@ class Plan(SQLModel, table=True):
 
 
 class Payment(SQLModel, table=True):
-    payment_id: str = Field(primary_key=True, max_length=255)
+    payment_id: str = Field(
+        default_factory=lambda: f"pay_{uuid.uuid4().hex}",
+        primary_key=True,
+        max_length=255,
+    )
     user_id: str = Field(foreign_key="user.user_id", index=True)
     plan_id: Optional[str] = Field(default=None, foreign_key="plan.plan_id", index=True)
 

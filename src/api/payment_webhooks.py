@@ -5,8 +5,40 @@ from sqlmodel import Session, select
 from src.api.schema import Plan, Payment, PaymentEvent, User, Subscription
 
 
+def safe_get(data, *keys):
+    """Safely extract nested values, handling both dicts and lists.
+
+    For list elements, if the key is a string (like "entity"), it looks up that
+    key in the first element of the list. Integer keys are treated as indices.
+    """
+    current = data
+    for key in keys:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, list):
+            if not current:
+                return None
+            first_item = current[0]
+            if isinstance(first_item, dict):
+                if isinstance(key, str):
+                    current = first_item.get(key)
+                else:
+                    try:
+                        idx = int(key)
+                        current = current[idx] if idx < len(current) else None
+                    except (ValueError, TypeError):
+                        return None
+            else:
+                return None
+        else:
+            return None
+    return current
+
+
 def handle_subscription_activated(payload: dict, db: Session):
-    subscription_entity = payload.get("subscription", {}).get("entity", {})
+    subscription_entity = safe_get(payload, "subscription", "entity") or {}
     razorpay_subscription_id = subscription_entity.get("id")
     notes = subscription_entity.get("notes", {})
     app_payment_id = notes.get("app_payment_id")
@@ -21,14 +53,12 @@ def handle_subscription_activated(payload: dict, db: Session):
         select(Payment).where(Payment.payment_id == app_payment_id)
     ).first()
     if not db_payment:
-        print(
-            f"[WEBHOOK] ERROR: Payment record with ID {app_payment_id} not found."
-        )
+        print(f"[WEBHOOK] ERROR: Payment record with ID {app_payment_id} not found.")
         return
 
     # Create a new Subscription record
     new_subscription = Subscription(
-        razorpay_subscription_id=razorpay_subscription_id,
+        razorpay_subscription_id=razorpay_subscription_id or "",
         user_id=db_payment.user_id,
         plan_id=db_payment.plan_id,
         payment_id=db_payment.payment_id,
@@ -64,8 +94,8 @@ def handle_subscription_activated(payload: dict, db: Session):
 
 
 def handle_subscription_charged(payload: dict, db: Session):
-    payment_entity = payload.get("payment", {}).get("entity", {})
-    subscription_entity = payload.get("subscription", {}).get("entity", {})
+    payment_entity = safe_get(payload, "payment", "entity") or {}
+    subscription_entity = safe_get(payload, "subscription", "entity") or {}
     razorpay_subscription_id = subscription_entity.get("id")
 
     db_subscription = db.exec(
@@ -118,10 +148,8 @@ def handle_subscription_charged(payload: dict, db: Session):
     )
 
 
-def handle_subscription_status_change(
-    event_type: str, payload: dict, db: Session
-):
-    subscription_entity = payload.get("subscription", {}).get("entity", {})
+def handle_subscription_status_change(event_type: str, payload: dict, db: Session):
+    subscription_entity = safe_get(payload, "subscription", "entity") or {}
     razorpay_subscription_id = subscription_entity.get("id")
 
     db_subscription = db.exec(
@@ -137,7 +165,7 @@ def handle_subscription_status_change(
         "subscription.cancelled": "cancelled",
         "subscription.paused": "paused",
         "subscription.resumed": "active",
-    }.get(event_type)
+    }.get(event_type) or "unknown"
 
     db_subscription.status = new_status
     if new_status == "cancelled":
@@ -152,11 +180,13 @@ def handle_subscription_status_change(
     )
     db.add(event)
     db.commit()
-    print(f"[WEBHOOK] {event_type}: Processed for subscription {razorpay_subscription_id}")
+    print(
+        f"[WEBHOOK] {event_type}: Processed for subscription {razorpay_subscription_id}"
+    )
 
 
 def handle_payment_failed(payload: dict, db: Session):
-    payment_entity = payload.get("payment", {}).get("entity", {})
+    payment_entity = safe_get(payload, "payment", "entity") or {}
     notes = payment_entity.get("notes", {})
     app_payment_id = notes.get("app_payment_id")
 
@@ -193,8 +223,7 @@ def handle_payment_failed(payload: dict, db: Session):
 def handle_unhandled_event(event_type: str, payload: dict, db: Session):
     print(f"[WEBHOOK] UNHANDLED EVENT: {event_type}")
     print(f"[WEBHOOK] Full payload: {json.dumps(payload, indent=2)}")
-    # Optionally, log to database
-    notes = payload.get("payment", {}).get("entity", {}).get("notes", {})
+    notes = safe_get(payload, "payment", "entity", "notes") or {}
     user_id = notes.get("app_user_id") if notes else "unknown"
 
     event = PaymentEvent(

@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select  # Add select
 from datetime import datetime, timezone  # Ensure these are imported
-
+import os
 from ..config import settings
 from ..schema import (
     Plan,
@@ -19,6 +19,38 @@ router = APIRouter(
     prefix="/payment",
     tags=["Payment"],
 )
+
+
+def safe_get(data, *keys):
+    """Safely extract nested values, handling both dicts and lists.
+
+    For list elements, if the key is a string (like "entity"), it looks up that
+    key in the first element of the list. Integer keys are treated as indices.
+    """
+    current = data
+    for key in keys:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, list):
+            if not current:
+                return None
+            first_item = current[0]
+            if isinstance(first_item, dict):
+                if isinstance(key, str):
+                    current = first_item.get(key)
+                else:
+                    try:
+                        idx = int(key)
+                        current = current[idx] if idx < len(current) else None
+                    except (ValueError, TypeError):
+                        return None
+            else:
+                return None
+        else:
+            return None
+    return current
 
 
 client = razorpay.Client(
@@ -38,7 +70,7 @@ class WebhookRequest(BaseModel):
 
 def verify_razorpay_signature(payment_id: str, order_id: str, signature: str) -> bool:
     try:
-        client.utility.verifyPaymentSignature(
+        client.utility.verify_payment_signature(
             {
                 "razorpay_payment_id": payment_id,
                 "razorpay_order_id": order_id,
@@ -50,14 +82,43 @@ def verify_razorpay_signature(payment_id: str, order_id: str, signature: str) ->
         return False
 
 
-def verify_webhook_signature(raw_body: str, signature: str) -> bool:
+def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
     try:
-        client.utility.verifyWebhookSignature(
-            raw_body, signature, settings.razorpay_webhook_secret
+        webhook_secret = settings.razorpay_webhook_secret
+        print(f"[DEBUG] Verifying webhook signature...")
+        print(
+            f"[DEBUG] Signature: {signature[:20]}..."
+            if signature
+            else "[DEBUG] Signature: None"
         )
+        print(
+            f"[DEBUG] Webhook secret: {webhook_secret[:10]}..."
+            if webhook_secret
+            else "[DEBUG] Webhook secret: None"
+        )
+        print(f"[DEBUG] Raw body length: {len(raw_body)} bytes")
+
+        client.utility.verify_webhook_signature(
+            raw_body.decode("utf-8"),
+            signature,
+            webhook_secret,
+        )
+        print("[DEBUG] Signature verification passed!")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] Signature verification failed: {e}")
         return False
+
+
+# Event handlers mapping for Razorpay webhooks
+EVENT_HANDLERS = {}
+
+
+def handle_unhandled_event(event_type: str, payload: dict, db: Session):
+    """Handle unknown/unhandled webhook event types."""
+    print(f"[WEBHOOK] Unhandled event type: {event_type}")
+    # Optionally log to database or monitoring system
+    pass
 
 
 @router.post("/create-subscription")
@@ -126,7 +187,7 @@ async def create_subscription(
         # 4. Interact with Razorpay to create the subscription
         subscription_data = {
             "plan_id": db_plan.razorpay_plan_id,  # Use Razorpay's specific plan ID from DB
-            "total_count": 0,  # Use 0 for auto-renewing subscriptions, or calculate based on duration_days if limited cycles
+            "total_count": 120,  # auto pay for 10 years, adjust as needed
             "quantity": 1,
             "notes": {
                 "app_user_id": db_user.user_id,
@@ -176,19 +237,37 @@ async def create_subscription(
 async def razorpay_webhook(
     request: Request, response: Response, db: Session = Depends(get_session)
 ):
+    user_id = "system"  # Default fallback
+    raw_body = None
+
     try:
         raw_body = await request.body()
+
         signature = request.headers.get("x-razorpay-signature")
+        timestamp = request.headers.get("x-razorpay-timestamp")
 
         if not signature:
             raise HTTPException(status_code=400, detail="Missing signature")
 
-        if not verify_webhook_signature(raw_body.decode(), signature):
+        # Verify signature FIRST with raw bytes
+        if not verify_webhook_signature(raw_body, signature):
             raise HTTPException(status_code=400, detail="Invalid signature")
 
-        event_data = json.loads(raw_body)
+        # Parse JSON AFTER successful verification
+        event_data = json.loads(raw_body.decode())
         event_type = event_data.get("event")
         payload = event_data.get("payload", {})
+
+        # Extract user_id from payload for logging
+        user_id = (
+            safe_get(payload, "subscription", "entity", "notes", "app_user_id")
+            or "system"
+        )
+        if user_id == "system":
+            user_id = (
+                safe_get(payload, "payment", "entity", "notes", "app_user_id")
+                or "system"
+            )
 
         handler = EVENT_HANDLERS.get(event_type)
 
@@ -202,9 +281,9 @@ async def razorpay_webhook(
 
     except Exception as e:
         print(f"[WEBHOOK] Error: {str(e)}")
-        # Log critical error to DB
+        # Log critical error to DB with extracted or fallback user_id
         error_event = PaymentEvent(
-            user_id="system",  # Or parse from payload if possible
+            user_id=user_id,
             event_type="webhook_critical_error",
             event_description=f"Critical error in webhook processing: {str(e)}",
         )

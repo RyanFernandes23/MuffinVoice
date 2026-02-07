@@ -11,7 +11,7 @@
 14. typing text support.
 15. ocr support.
 16. user notification via email for subscription activated (either via razorpay or manually)
-
+17. handle user sneaky (delete account and create again with same email for free access)
 
 ngrok config:
 -- localhost 8000 at raytech expose

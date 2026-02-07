@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     razorpay_creator_plan_id: str = ""
     razorpay_professional_plan_id: str = ""
+    clerk_webhook_secret: str = "" # Add this line
 
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
