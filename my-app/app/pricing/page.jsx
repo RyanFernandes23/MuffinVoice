@@ -98,10 +98,11 @@ function PricingCard({ plan, onSubscribe }) { // Add onSubscribe prop
 }
 
 import toast from 'react-hot-toast'; // Add this import
-import { useUser } from "@clerk/nextjs"; // Import useUser
+import { useUser, useAuth } from "@clerk/nextjs"; // Import useUser and useAuth
 
 export default function PricingPage() {
   const { user, isSignedIn } = useUser(); // Use the useUser hook
+  const { getToken } = useAuth(); // Get the getToken function to retrieve JWT
 
   const handleSubscribe = async (planName, price) => { // Added price parameter
     if (!isSignedIn || !user || !user.id) {
@@ -109,19 +110,26 @@ export default function PricingPage() {
       return;
     }
 
-    const userId = user.id;
-
     // Show loading toast
     const loadingToastId = toast.loading(`Initiating ${planName} subscription...`);
 
     try {
+      // Get the JWT token from Clerk
+      const token = await getToken();
+      if (!token) {
+        throw new Error("Failed to get authentication token");
+      }
+
       // 1. Call your backend to create the subscription
       const response = await fetch('/api/payment/create-subscription', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`, // Send JWT token in Authorization header
+        },
         body: JSON.stringify({ 
             plan_name: planName.toLowerCase(),
-            user_id: userId, // Pass the user_id from Clerk
+            // user_id is no longer sent - it comes from the JWT token
         }) 
       });
 

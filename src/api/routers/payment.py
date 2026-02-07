@@ -14,6 +14,7 @@ from ..schema import (
     Subscription,
 )  # Import new models
 from ..utils import get_session  # Import get_session from utils
+from ..deps import clerk_auth  # Import clerk_auth for JWT validation
 
 router = APIRouter(
     prefix="/payment",
@@ -60,7 +61,6 @@ client = razorpay.Client(
 
 class SubscriptionRequest(BaseModel):
     plan_name: str
-    user_id: str  # Assuming user_id is passed in the request for this example
 
 
 class WebhookRequest(BaseModel):
@@ -110,31 +110,601 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
         return False
 
 
-# Event handlers mapping for Razorpay webhooks
-EVENT_HANDLERS = {}
+# ==================== Subscription Event Handlers ====================
+
+
+def _convert_timestamp(timestamp_val):
+    """Convert Unix timestamp (int) or ISO string to datetime."""
+    if isinstance(timestamp_val, int):
+        return datetime.fromtimestamp(timestamp_val, tz=timezone.utc)
+    elif isinstance(timestamp_val, str):
+        return datetime.fromisoformat(timestamp_val.replace("Z", "+00:00"))
+    return datetime.now(timezone.utc)
+
+
+def handle_subscription_activated(payload: dict, db: Session):
+    """Handle subscription.activated event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            print("[WEBHOOK] Missing subscription data in payload")
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+        plan_id = safe_get(subscription_data, "notes", "app_plan_id")
+        payment_id = safe_get(subscription_data, "notes", "app_payment_id")
+
+        if not user_id or not plan_id:
+            print("[WEBHOOK] Missing user_id or plan_id in subscription notes")
+            return
+
+        # Update or create subscription record
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        start_dt = _convert_timestamp(subscription_data.get("start_at")) if subscription_data.get("start_at") else datetime.now(timezone.utc)
+        end_dt = _convert_timestamp(subscription_data.get("end_at")) if subscription_data.get("end_at") else datetime.now(timezone.utc)
+
+        if existing_sub:
+            existing_sub.status = "active"
+            existing_sub.start_date = start_dt.date()
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+        else:
+            new_sub = Subscription(
+                razorpay_subscription_id=razorpay_sub_id,
+                user_id=user_id,
+                plan_id=plan_id,
+                payment_id=payment_id,
+                start_date=start_dt.date(),
+                end_date=end_dt.date(),
+                status="active",
+                auto_renew_enabled=subscription_data.get("auto_renew", False),
+            )
+            db.add(new_sub)
+
+        # Log the event
+        event_log = PaymentEvent(
+            user_id=user_id,
+            payment_id=payment_id,
+            subscription_id=razorpay_sub_id,
+            event_type="subscription_activated",
+            event_description="Subscription successfully activated",
+        )
+        db.add(event_log)
+        db.commit()
+
+        print(f"[WEBHOOK] Subscription {razorpay_sub_id} activated for user {user_id}")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.activated: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_updated(payload: dict, db: Session):
+    """Handle subscription.updated event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            end_dt = _convert_timestamp(subscription_data.get("end_at")) if subscription_data.get("end_at") else None
+            existing_sub.end_date = end_dt.date() if end_dt else existing_sub.end_date
+            existing_sub.auto_renew_enabled = subscription_data.get("auto_renew", existing_sub.auto_renew_enabled)
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_updated",
+                event_description="Subscription details updated",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} updated")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.updated: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_paused(payload: dict, db: Session):
+    """Handle subscription.paused event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "paused"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_paused",
+                event_description="Subscription paused by system or user",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} paused")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.paused: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_resumed(payload: dict, db: Session):
+    """Handle subscription.resumed event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "active"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_resumed",
+                event_description="Subscription resumed",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} resumed")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.resumed: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_cancelled(payload: dict, db: Session):
+    """Handle subscription.cancelled event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "cancelled"
+            existing_sub.cancelled_at = datetime.now(timezone.utc)
+            existing_sub.cancel_reason = subscription_data.get("short_url") or "Cancelled via webhook"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_cancelled",
+                event_description="Subscription cancelled",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} cancelled")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.cancelled: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_expired(payload: dict, db: Session):
+    """Handle subscription.expired event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "expired"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_expired",
+                event_description="Subscription period expired",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} expired")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.expired: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_halted(payload: dict, db: Session):
+    """Handle subscription.halted event (halted due to failed payments)."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "halted"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_halted",
+                event_description="Subscription halted due to payment failures",
+                error_code="PAYMENT_FAILURE",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} halted due to payment failure")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.halted: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_completed(payload: dict, db: Session):
+    """Handle subscription.completed event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.razorpay_subscription_id == razorpay_sub_id
+            )
+        ).first()
+
+        if existing_sub:
+            existing_sub.status = "completed"
+            existing_sub.updated_at = datetime.now(timezone.utc)
+            db.add(existing_sub)
+
+            event_log = PaymentEvent(
+                user_id=user_id or existing_sub.user_id,
+                subscription_id=razorpay_sub_id,
+                event_type="subscription_completed",
+                event_description="Subscription completed",
+            )
+            db.add(event_log)
+            db.commit()
+
+            print(f"[WEBHOOK] Subscription {razorpay_sub_id} completed")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.completed: {str(e)}")
+        db.rollback()
+
+
+# ==================== Payment Event Handlers ====================
+
+
+def handle_payment_authorized(payload: dict, db: Session):
+    """Handle payment.authorized event."""
+    try:
+        payment_data = safe_get(payload, "payment", "entity")
+        if not payment_data:
+            return
+
+        razorpay_payment_id = payment_data.get("id")
+        user_id = safe_get(payment_data, "notes", "app_user_id")
+        payment_id = safe_get(payment_data, "notes", "app_payment_id")
+
+        if payment_id:
+            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            if payment:
+                payment.gateway_payment_id = razorpay_payment_id
+                payment.status = "authorized"
+                payment.payment_method = payment_data.get("method")
+                payment.updated_at = datetime.now(timezone.utc)
+                db.add(payment)
+
+                event_log = PaymentEvent(
+                    user_id=user_id or payment.user_id,
+                    payment_id=payment_id,
+                    event_type="payment_authorized",
+                    event_description="Payment authorized",
+                )
+                db.add(event_log)
+                db.commit()
+
+                print(f"[WEBHOOK] Payment {razorpay_payment_id} authorized")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling payment.authorized: {str(e)}")
+        db.rollback()
+
+
+def handle_payment_captured(payload: dict, db: Session):
+    """Handle payment.captured event."""
+    try:
+        payment_data = safe_get(payload, "payment", "entity")
+        if not payment_data:
+            return
+
+        razorpay_payment_id = payment_data.get("id")
+        user_id = safe_get(payment_data, "notes", "app_user_id")
+        payment_id = safe_get(payment_data, "notes", "app_payment_id")
+
+        if payment_id:
+            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            if payment:
+                payment.gateway_payment_id = razorpay_payment_id
+                payment.status = "captured"
+                payment.payment_method = payment_data.get("method")
+                payment.updated_at = datetime.now(timezone.utc)
+                db.add(payment)
+
+                event_log = PaymentEvent(
+                    user_id=user_id or payment.user_id,
+                    payment_id=payment_id,
+                    event_type="payment_captured",
+                    event_description="Payment successfully captured",
+                )
+                db.add(event_log)
+                db.commit()
+
+                print(f"[WEBHOOK] Payment {razorpay_payment_id} captured")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling payment.captured: {str(e)}")
+        db.rollback()
+
+
+def handle_payment_failed(payload: dict, db: Session):
+    """Handle payment.failed event."""
+    try:
+        payment_data = safe_get(payload, "payment", "entity")
+        if not payment_data:
+            return
+
+        razorpay_payment_id = payment_data.get("id")
+        user_id = safe_get(payment_data, "notes", "app_user_id")
+        payment_id = safe_get(payment_data, "notes", "app_payment_id")
+        error_code = payment_data.get("error_code")
+        error_description = payment_data.get("error_description")
+
+        if payment_id:
+            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            if payment:
+                payment.gateway_payment_id = razorpay_payment_id
+                payment.status = "failed"
+                payment.gateway_response_code = error_code
+                payment.gateway_response_message = error_description
+                payment.updated_at = datetime.now(timezone.utc)
+                db.add(payment)
+
+                event_log = PaymentEvent(
+                    user_id=user_id or payment.user_id,
+                    payment_id=payment_id,
+                    event_type="payment_failed",
+                    event_description=f"Payment failed: {error_description}",
+                    error_code=error_code,
+                    error_details={
+                        "reason": payment_data.get("reason"),
+                        "error_code": error_code,
+                        "error_description": error_description,
+                    },
+                )
+                db.add(event_log)
+                db.commit()
+
+                print(f"[WEBHOOK] Payment {razorpay_payment_id} failed with error {error_code}")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling payment.failed: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_authenticated(payload: dict, db: Session):
+    """Handle subscription.authenticated event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        if not subscription_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id")
+        user_id = safe_get(subscription_data, "notes", "app_user_id")
+
+        # Log the authentication event
+        event_log = PaymentEvent(
+            user_id=user_id or "system",
+            subscription_id=razorpay_sub_id,
+            event_type="subscription_authenticated",
+            event_description="Subscription authenticated",
+        )
+        db.add(event_log)
+        db.commit()
+
+        print(f"[WEBHOOK] Subscription {razorpay_sub_id} authenticated")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.authenticated: {str(e)}")
+        db.rollback()
+
+
+def handle_subscription_charged(payload: dict, db: Session):
+    """Handle subscription.charged event."""
+    try:
+        subscription_data = safe_get(payload, "subscription", "entity")
+        payment_data = safe_get(payload, "payment", "entity")
+        
+        if not subscription_data and not payment_data:
+            return
+
+        razorpay_sub_id = subscription_data.get("id") if subscription_data else None
+        razorpay_payment_id = payment_data.get("id") if payment_data else None
+        user_id = safe_get(subscription_data or payment_data, "notes", "app_user_id")
+        payment_id = safe_get(subscription_data or payment_data, "notes", "app_payment_id")
+
+        # Update payment if exists
+        if payment_id:
+            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            if payment:
+                payment.status = "charged"
+                payment.gateway_payment_id = razorpay_payment_id
+                payment.updated_at = datetime.now(timezone.utc)
+                db.add(payment)
+
+        # Log the charge event
+        event_log = PaymentEvent(
+            user_id=user_id or "system",
+            payment_id=payment_id,
+            subscription_id=razorpay_sub_id,
+            event_type="subscription_charged",
+            event_description="Subscription charged successfully",
+        )
+        db.add(event_log)
+        db.commit()
+
+        print(f"[WEBHOOK] Subscription {razorpay_sub_id} charged with payment {razorpay_payment_id}")
+    except Exception as e:
+        print(f"[WEBHOOK] Error handling subscription.charged: {str(e)}")
+        db.rollback()
 
 
 def handle_unhandled_event(event_type: str, payload: dict, db: Session):
     """Handle unknown/unhandled webhook event types."""
-    print(f"[WEBHOOK] Unhandled event type: {event_type}")
-    # Optionally log to database or monitoring system
-    pass
+    try:
+        # Extract basic information for logging
+        user_id = (
+            safe_get(payload, "subscription", "entity", "notes", "app_user_id")
+            or safe_get(payload, "payment", "entity", "notes", "app_user_id")
+            or "system"
+        )
+
+        payment_id = safe_get(payload, "payment", "entity", "notes", "app_payment_id")
+        # Only set subscription_id if it exists in the database to avoid foreign key constraint
+        subscription_id_from_payload = safe_get(payload, "subscription", "entity", "id")
+        subscription_id = None
+        
+        if subscription_id_from_payload:
+            existing_sub = db.exec(
+                select(Subscription).where(
+                    Subscription.razorpay_subscription_id == subscription_id_from_payload
+                )
+            ).first()
+            if existing_sub:
+                subscription_id = subscription_id_from_payload
+
+        # Log unhandled events to database for review
+        event_log = PaymentEvent(
+            user_id=user_id,
+            payment_id=payment_id,
+            subscription_id=subscription_id,  # Only set if exists in DB
+            event_type=f"unhandled_{event_type}",
+            event_description=f"Unhandled event type: {event_type}",
+            error_details={"event_type": event_type, "payload": payload},
+        )
+        db.add(event_log)
+        db.commit()
+
+        print(f"[WEBHOOK] Unhandled event type logged: {event_type} for user {user_id}")
+    except Exception as e:
+        print(f"[WEBHOOK] Error logging unhandled event: {str(e)}")
+        db.rollback()
+
+
+# ==================== Event Handler Registry ====================
+
+# Register all event handlers
+EVENT_HANDLERS = {
+    "subscription.activated": handle_subscription_activated,
+    "subscription.authenticated": handle_subscription_authenticated,
+    "subscription.charged": handle_subscription_charged,
+    "subscription.updated": handle_subscription_updated,
+    "subscription.paused": handle_subscription_paused,
+    "subscription.resumed": handle_subscription_resumed,
+    "subscription.cancelled": handle_subscription_cancelled,
+    "subscription.expired": handle_subscription_expired,
+    "subscription.halted": handle_subscription_halted,
+    "subscription.completed": handle_subscription_completed,
+    "payment.authorized": handle_payment_authorized,
+    "payment.captured": handle_payment_captured,
+    "payment.failed": handle_payment_failed,
+}
 
 
 @router.post("/create-subscription")
 async def create_subscription(
     request: SubscriptionRequest,
+    token_payload=Depends(clerk_auth),
     db: Session = Depends(get_session),  # Add DB session dependency
 ):
     """
     Create a subscription on Razorpay and return the subscription_id.
     This endpoint now incorporates database operations to manage payment and plan details.
+    JWT authentication is required - user_id is extracted from the token.
     """
     try:
+        # Extract user_id from JWT token
+        user_id = token_payload.decoded.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: no user ID")
+
         # 1. Validate User and Plan from Database
-        # Assume user_id comes from an authenticated context or request.
-        # For this example, it's part of SubscriptionRequest.
-        db_user = db.exec(select(User).where(User.user_id == request.user_id)).first()
+        db_user = db.exec(select(User).where(User.user_id == user_id)).first()
         if not db_user:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -221,7 +791,7 @@ async def create_subscription(
         # Log unexpected errors
         print(f"Error in create_subscription: {e}")
         error_event = PaymentEvent(
-            user_id=request.user_id,  # Assuming user_id is always available from request
+            user_id=user_id,
             event_type="create_subscription_error",
             event_description=f"Unexpected error during subscription creation: {str(e)}",
         )
