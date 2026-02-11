@@ -3,13 +3,13 @@ from datetime import date, datetime, timezone
 from typing import Dict, List, Optional
 from decimal import Decimal
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, ForeignKey, Index
 from sqlmodel import Field, Session, SQLModel, create_engine, select, Relationship
 
 
 class Notebook(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: str = Field(index=True, foreign_key="user.user_id")  # The Clerk User ID
+    user_id: str = Field(index=True, foreign_key="user.user_id")
     job_id: str = Field(unique=True, index=True)
     title: str
     voice: str
@@ -17,15 +17,18 @@ class Notebook(SQLModel, table=True):
     status: str = Field(default="processing")
 
     user: Optional["User"] = Relationship(back_populates="notebooks")
+    notes: List["Note"] = Relationship(back_populates="notebook", cascade_delete=True)
 
 
 class Note(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True, foreign_key="user.user_id")
-    job_id: str = Field(index=True)
-    timestamp: float  # Audio timestamp in seconds
-    user_note: str  # The note text
-    subtitle_text: Optional[str] = None  # Context: subtitle text at that moment
+    job_id: str = Field(
+        sa_column=Column(ForeignKey("notebook.job_id", ondelete="CASCADE"), index=True)
+    )
+    timestamp: float
+    user_note: str
+    subtitle_text: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -33,6 +36,7 @@ class Note(SQLModel, table=True):
         return f"<Note user_id={self.user_id} job_id={self.job_id} timestamp={self.timestamp}>"
 
     user: Optional["User"] = Relationship(back_populates="notes")
+    notebook: Optional["Notebook"] = Relationship(back_populates="notes")
 
 
 class User(SQLModel, table=True):

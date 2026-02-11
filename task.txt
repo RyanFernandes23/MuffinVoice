@@ -12,6 +12,8 @@
 15. ocr support.
 16. user notification via email for subscription activated (either via razorpay or manually)
 17. handle user sneaky (delete account and create again with same email for free access)
+18. different price different country
+19. token consumption db, ui status, and backend check
 
 ngrok config:
 -- localhost 8000 at raytech expose

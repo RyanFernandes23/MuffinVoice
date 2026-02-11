@@ -4,17 +4,35 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import (APIRouter, BackgroundTasks, Depends, File, Header,
-                     HTTPException, Response, UploadFile)
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Response,
+    UploadFile,
+)
 from sqlmodel import Session, desc, select
 from werkzeug.utils import secure_filename
 
-from src.api.deps import (AVAILABLE_VOICES, MAX_FILE_SIZE, clerk_auth,
-                          get_current_user, logger)
+from src.api.deps import (
+    AVAILABLE_VOICES,
+    MAX_FILE_SIZE,
+    clerk_auth,
+    get_current_user,
+    logger,
+)
 from src.api.schema import Note, Notebook
-from src.api.utils import (get_job_status, get_session,
-                           get_unique_notebook_title, process_file_task,
-                           sanitize_display_filename, set_job_status)
+from src.api.utils import (
+    get_job_status,
+    get_session,
+    get_unique_notebook_title,
+    process_file_task,
+    sanitize_display_filename,
+    set_job_status,
+)
 from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
@@ -119,35 +137,61 @@ async def delete_notebook(
             detail="Notebook not found or you don't have permission to delete it.",
         )
 
-    # 1. Delete all associated notes
-    note_statement = select(Note).where(Note.job_id == job_id, Note.user_id == user_id)
-    notes_to_delete = session.exec(note_statement).all()
-    for note in notes_to_delete:
-        session.delete(note)
-    session.commit()
-    logger.info(f"Deleted {len(notes_to_delete)} notes for job {job_id}.")
+    notebook_user_id = notebook.user_id
 
-    # 2. Delete files from S3
     s3 = get_s3_client()
-    s3_prefix = f"{user_id}/{job_id}/"
+    s3_prefix = f"{notebook_user_id}/{job_id}/"
     try:
         response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
         if "Contents" in response:
             objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
             s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
-            logger.info(f"Deleted all files from S3 for prefix: {s3_prefix}")
+            logger.info(
+                f"Deleted {len(objects_to_delete)} objects from S3: {s3_prefix}"
+            )
+        else:
+            logger.info(f"No S3 objects found for prefix: {s3_prefix}")
     except Exception as e:
-        logger.error(f"Error deleting files from S3 for prefix {s3_prefix}: {e}")
+        logger.error(f"S3 deletion failed for {s3_prefix}: {e}")
         raise HTTPException(
-            status_code=500, detail="Failed to delete associated files from storage."
+            status_code=500,
+            detail=f"Failed to delete files from storage: {str(e)}",
         )
 
-    # 3. Delete notebook from DB and job from Redis
-    session.delete(notebook)
-    session.commit()
-    logger.info(f"Deleted notebook {job_id} from database.")
-    redis_client.delete(f"job:{job_id}")
-    logger.info(f"Deleted job {job_id} from Redis.")
+    try:
+        redis_client.delete(f"job:{job_id}")
+        logger.info(f"Deleted Redis key: job:{job_id}")
+    except Exception as e:
+        logger.error(f"Redis deletion failed for job {job_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete job from cache: {str(e)}",
+        )
+
+    try:
+        from sqlmodel import delete
+
+        result = session.execute(delete(Note).where(Note.job_id == job_id))
+        notes_deleted = result.rowcount
+        logger.info(f"Bulk deleted {notes_deleted} notes for job {job_id}")
+    except Exception as e:
+        logger.error(f"Note deletion failed for job {job_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete associated notes: {str(e)}",
+        )
+
+    try:
+        session.delete(notebook)
+        session.commit()
+        logger.info(f"Deleted notebook {job_id} from database")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Notebook deletion failed for {job_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete notebook: {str(e)}",
+        )
 
     return Response(status_code=204)
 
