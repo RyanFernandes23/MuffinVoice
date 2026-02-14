@@ -788,6 +788,67 @@ async def create_subscription(
                 detail=f"Razorpay Plan ID not configured for plan '{request.plan_name}'",
             )
 
+        # Check for existing active subscription (upgrade logic)
+        existing_sub = db.exec(
+            select(Subscription).where(
+                Subscription.user_id == user_id, Subscription.status == "active"
+            )
+        ).first()
+
+        if existing_sub:
+            # Get old plan to check if this is an upgrade
+            old_plan = db.exec(
+                select(Plan).where(Plan.plan_id == existing_sub.plan_id)
+            ).first()
+
+            # Define plan hierarchy
+            plan_tiers = {"explorer": 1, "creator": 2, "professional": 3}
+
+            old_tier = plan_tiers.get(old_plan.name, 0) if old_plan else 0
+            new_tier = plan_tiers.get(request.plan_name.lower(), 0)
+
+            if new_tier <= old_tier:
+                # Downgrade or same plan - not supported
+                raise HTTPException(
+                    status_code=400,
+                    detail="Downgrade not supported. Please contact support.",
+                )
+
+            # Upgrade: update subscription in Razorpay
+            try:
+                client.subscription.update(
+                    existing_sub.razorpay_subscription_id,
+                    {  # type: ignore
+                        "plan_id": db_plan.razorpay_plan_id,
+                        "schedule_change_at": "now",
+                    },
+                )
+                # Update local subscription record
+                existing_sub.plan_id = db_plan.plan_id
+                existing_sub.updated_at = datetime.now(timezone.utc)
+                db.add(existing_sub)
+                db.commit()
+
+                # Reset user tokens to new plan limit
+                reset_user_tokens(
+                    session=db,
+                    user_id=user_id,
+                    new_token_limit=db_plan.token_limit,
+                    reason="plan_upgrade",
+                )
+
+                return {
+                    "message": "Plan upgraded successfully",
+                    "old_plan": old_plan.name if old_plan else "unknown",
+                    "new_plan": db_plan.name,
+                    "razorpay_subscription_id": existing_sub.razorpay_subscription_id,
+                }
+            except Exception as e:
+                print(f"Error updating subscription: {e}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to upgrade subscription: {str(e)}"
+                )
+
         # 2. Create a pending Payment record in your database
         # This records the initiation of a payment attempt
         new_payment = Payment(

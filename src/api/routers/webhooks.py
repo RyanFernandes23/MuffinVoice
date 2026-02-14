@@ -13,6 +13,8 @@ from ..config import settings
 from ..utils import get_session
 from ..schema import User, PaymentEvent, Plan, Notebook, Subscription, DeletedUser
 from src.utils.payment_client import cancel_razorpay_subscription
+from src.TTS_Workers.tasks import get_s3_client
+from src.utils.RedisClient import redis_client
 
 webhooks_router = APIRouter(
     prefix="/webhooks",
@@ -315,6 +317,29 @@ def handle_user_deleted(user_data: Dict[str, Any], db: Session):
 
     # Delete notebooks (notes auto-delete via CASCADE)
     notebooks = db.exec(select(Notebook).where(Notebook.user_id == clerk_user_id)).all()
+
+    # Delete all S3 files for the user (entire user folder)
+    s3 = get_s3_client()
+    try:
+        s3_prefix = f"{user.user_id}/"
+        response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
+        if "Contents" in response:
+            objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
+            s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
+            print(
+                f"Deleted {len(objects_to_delete)} S3 objects for user {user.user_id}"
+            )
+    except Exception as e:
+        print(f"Error deleting S3 objects for user {user.user_id}: {e}")
+
+    # Delete Redis keys for each notebook
+    for nb in notebooks:
+        try:
+            redis_client.delete(f"job:{nb.job_id}")
+        except Exception as e:
+            print(f"Error deleting Redis key for job {nb.job_id}: {e}")
+
+    # Delete notebooks from database
     for nb in notebooks:
         db.delete(nb)
     print(f"Deleted {len(notebooks)} notebooks for user {clerk_user_id}")
