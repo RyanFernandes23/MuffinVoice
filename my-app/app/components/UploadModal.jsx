@@ -3,6 +3,7 @@ import { useAuth } from '@clerk/nextjs';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // Import motion and AnimatePresence
 import { FileText, Mic, X, UploadCloud, Trash2 } from 'lucide-react'; // Import icons
+import { FileTooLargeModal } from './modals/FileTooLargeModal';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
@@ -16,9 +17,11 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   const { getToken } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_bella');
-
-  // MAX_FILE_SIZE now dynamically determined by plan limits
-  // (Assuming plan limits are fetched elsewhere or hardcoded in useUsage)
+  
+  // File too large modal state
+  const [showFileTooLargeModal, setShowFileTooLargeModal] = useState(false);
+  const [currentPlan, setCurrentPlan] = useState('explorer');
+  const [maxFileSize, setMaxFileSize] = useState(50 * 1024 * 1024); // 50MB default
 
   // Available voices for initial processing
   const voices = [
@@ -30,19 +33,51 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     { id: 'em_alex', name: 'Alex (Male)' },
   ];
 
+  // Fetch user's plan and limits when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchUserLimits();
+    }
+  }, [isOpen]);
+
+  const fetchUserLimits = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch(`${API_BASE_URL}/api/usage`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setCurrentPlan(data.data.plan_name || 'explorer');
+          // Convert MB to bytes
+          const maxMB = data.data.max_file_size_mb || 50;
+          setMaxFileSize(maxMB * 1024 * 1024);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching user limits:', error);
+      // Keep defaults
+    }
+  };
+
   // Reset state when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
       setFile(null);
       setError(null);
       setIsUploading(false);
-      setSelectedVoice('af_bella'); // Reset voice selection
+      setSelectedVoice('af_bella');
+      setShowFileTooLargeModal(false);
     }
   }, [isOpen]);
 
-  // Use a fixed max file size for now, as dynamic limits are not yet integrated here
-  const MAX_FILE_SIZE_MB = 100; // Default to 100MB as per plan limits in pricingTiers
-  const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+  // Get max file size in MB for display
+  const MAX_FILE_SIZE_MB = Math.round(maxFileSize / (1024 * 1024));
+  const MAX_FILE_SIZE = maxFileSize;
 
   const validateAndSetFile = (selectedFile) => {
     const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
@@ -107,6 +142,25 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
         const result = await response.json();
         onUpload(file.name, result.voice, result.job_id);
         onClose();
+      } else if (response.status === 402) {
+        // Payment Required - File too large or insufficient tokens
+        let errorData = {};
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          // If JSON parsing fails, use default message
+        }
+        
+        const errorMsg = errorData.detail || 'Upload limit exceeded';
+        
+        // Check if it's a file size error
+        if (errorMsg.toLowerCase().includes('file too large') || 
+            errorMsg.toLowerCase().includes('size')) {
+          setShowFileTooLargeModal(true);
+        } else {
+          // Insufficient tokens error
+          setError(errorMsg);
+        }
       } else {
         let errorMsg = 'Upload failed: Unknown server error.';
         try {
@@ -130,12 +184,13 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+    <>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
           className="fixed inset-0 bg-background/60 z-50 flex justify-center items-center backdrop-blur-sm px-4"
         >
           <motion.div
@@ -253,6 +308,18 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+      </AnimatePresence>
+      
+      <FileTooLargeModal
+        isOpen={showFileTooLargeModal}
+        onClose={() => setShowFileTooLargeModal(false)}
+        fileSize={file?.size || 0}
+        currentPlan={currentPlan}
+        onTryAnotherFile={() => {
+          setFile(null);
+          setShowFileTooLargeModal(false);
+        }}
+      />
+    </>
   );
 }

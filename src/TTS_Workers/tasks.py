@@ -19,6 +19,7 @@ from mutagen.mp3 import MP3
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from src.api.schema import Notebook
+from src.api.token_utils import refund_tokens, calculate_text_tokens
 from src.audio_processing.audio_processor import tts_generator
 from src.utils.RedisBroker import redis_broker
 from src.utils.RedisClient import redis_client
@@ -34,9 +35,10 @@ engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
 
 
 # --- DB Update Function ---
-def update_db_status(job_id: str, status: str):
+def update_db_status(job_id: str, status: str, total_tokens: int = None):
     """
     Syncs the final status to the SQL database, or removes the notebook if failed.
+    Also updates token usage and handles refunds.
     """
     try:
         with Session(engine) as session:
@@ -44,16 +46,49 @@ def update_db_status(job_id: str, status: str):
             notebook = session.exec(statement).first()
             if notebook:
                 if status == "failed":
+                    # Refund all tokens on failure
+                    if notebook.tokens_requested > 0:
+                        refund_tokens(
+                            session=session,
+                            user_id=notebook.user_id,
+                            amount=notebook.tokens_requested,
+                            notebook_id=job_id,
+                        )
+                        logging.info(
+                            f"[DB-SYNC] Refunded {notebook.tokens_requested} tokens for failed job {job_id}"
+                        )
+
                     session.delete(notebook)
                     session.commit()
                     logging.info(f"[DB-SYNC] Deleted failed job {job_id} from DB.")
-                else: # Only update status for non-failed final states (e.g., "completed")
+                else:  # Only update status for non-failed final states (e.g., "completed")
                     notebook.status = status
+
+                    # Update actual tokens used and handle refund if needed
+                    if total_tokens is not None and status == "completed":
+                        notebook.tokens_used = total_tokens
+
+                        # Refund difference if actual usage < requested
+                        if notebook.tokens_requested > total_tokens:
+                            refund_amount = notebook.tokens_requested - total_tokens
+                            refund_tokens(
+                                session=session,
+                                user_id=notebook.user_id,
+                                amount=refund_amount,
+                                notebook_id=job_id,
+                            )
+                            logging.info(
+                                f"[DB-SYNC] Refunded {refund_amount} tokens for job {job_id} "
+                                f"(requested: {notebook.tokens_requested}, actual: {total_tokens})"
+                            )
+
                     session.add(notebook)
                     session.commit()
                     logging.info(f"[DB-SYNC] Updated job {job_id} to {status}")
             else:
-                logging.warning(f"[DB-SYNC] Job {job_id} not found in DB for status update/deletion.")
+                logging.warning(
+                    f"[DB-SYNC] Job {job_id} not found in DB for status update/deletion."
+                )
     except Exception as e:
         logging.error(f"[DB-SYNC] Failed to update/delete DB for {job_id}: {e}")
 
@@ -67,6 +102,24 @@ def update_job_status(job_id, status):
     # 2. Update SQL (Cold Data) - Only on completion or failure
     if status in ["completed", "failed"]:
         update_db_status(job_id, status)
+
+
+def update_job_status_with_tokens(job_id, status, total_tokens):
+    """Update job status with token tracking for completed jobs."""
+    # 1. Update Redis (Hot Data)
+    redis_client.hset(
+        f"job:{job_id}", mapping={"status": status, "tokens_used": total_tokens}
+    )
+    logging.info(
+        f"Job {job_id} status updated to {status} with {total_tokens} tokens in Redis"
+    )
+
+    # 2. Update SQL (Cold Data) - Pass total tokens for refund calculation
+    if status == "completed":
+        update_db_status(job_id, status, total_tokens)
+    else:
+        update_db_status(job_id, status)
+
 
 @dramatiq.actor
 def complete_job_status(job_id, final_status):
@@ -143,8 +196,7 @@ def process_speeches(user_id, job_id, voice):
         if current_pipeline:
             # Main processing pipeline including finalization
             main_pipeline = pipeline(
-                current_pipeline,
-                finalize_manifest.message(user_id, job_id, voice)
+                current_pipeline, finalize_manifest.message(user_id, job_id, voice)
             )
 
             # Define a success callback for the main pipeline
@@ -156,7 +208,7 @@ def process_speeches(user_id, job_id, voice):
             main_pipeline.add_failure_callback(
                 complete_job_status.message(job_id, "failed")
             )
-            
+
             main_pipeline.run()
 
         logging.info(
@@ -165,8 +217,13 @@ def process_speeches(user_id, job_id, voice):
 
     except Exception as e:
         # This catch block is for errors occurring *before* the pipeline is run (e.g., S3 read of chunks.json)
-        complete_job_status.send(job_id, "failed") # Use the actor to update status consistently
-        logging.error(f"process_speeches initial setup failed for job {job_id}: {e}", exc_info=True)
+        complete_job_status.send(
+            job_id, "failed"
+        )  # Use the actor to update status consistently
+        logging.error(
+            f"process_speeches initial setup failed for job {job_id}: {e}",
+            exc_info=True,
+        )
         raise
 
 
@@ -181,6 +238,9 @@ def process_single_speech(index, text, voice, user_id, job_id):
             text = " ".join(map(str, text))
         elif not isinstance(text, str):
             text = str(text)
+
+        # Calculate actual tokens (character count) for this chunk
+        chunk_tokens = calculate_text_tokens(text)
 
         audio_data = b""
         with tts_generator(text, voice) as speech_output:
@@ -201,6 +261,7 @@ def process_single_speech(index, text, voice, user_id, job_id):
             "index": index,
             "filename": f"speech{index}.mp3",
             "duration": duration,
+            "tokens": chunk_tokens,  # Track tokens for this chunk
         }
 
         meta_key = f"{s3_prefix}/manifest_data.json"
@@ -312,8 +373,15 @@ def finalize_manifest(user_id, job_id, voice):
             ContentType="application/vnd.apple.mpegurl",
         )
 
+        # Calculate total actual tokens used from all processed chunks
+        total_tokens_used = sum(item.get("tokens", 0) for item in audio_meta)
         logging.info(f"--- SUCCESS: Subtitles and Manifest uploaded for {job_id} ---")
-        update_job_status(job_id, "completed")
+        logging.info(
+            f"[TOKENS] Total tokens used for job {job_id}: {total_tokens_used}"
+        )
+
+        # Pass total tokens to update_job_status
+        update_job_status_with_tokens(job_id, "completed", total_tokens_used)
 
         # Cleanup
         s3.delete_object(Bucket=bucket, Key=manifest_data_key)

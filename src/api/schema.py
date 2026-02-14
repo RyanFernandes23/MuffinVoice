@@ -15,6 +15,8 @@ class Notebook(SQLModel, table=True):
     voice: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = Field(default="processing")
+    tokens_used: int = Field(default=0)
+    tokens_requested: int = Field(default=0)
 
     user: Optional["User"] = Relationship(back_populates="notebooks")
     notes: List["Note"] = Relationship(back_populates="notebook", cascade_delete=True)
@@ -46,6 +48,11 @@ class User(SQLModel, table=True):
     password_hash: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    tokens_remaining: int = Field(default=0)
+    tokens_allocated: int = Field(default=0)
+    monthly_tokens_used: int = Field(default=0)
+    last_reset_date: Optional[datetime] = Field(default=None)
+    deleted_at: Optional[datetime] = Field(default=None)
 
     notebooks: List["Notebook"] = Relationship(back_populates="user")
     notes: List["Note"] = Relationship(back_populates="user")
@@ -53,6 +60,7 @@ class User(SQLModel, table=True):
     subscriptions: List["Subscription"] = Relationship(back_populates="user")
     payment_events: List["PaymentEvent"] = Relationship(back_populates="user")
     customer: Optional["Customer"] = Relationship(back_populates="user")
+    token_usage_logs: List["TokenUsageLog"] = Relationship(back_populates="user")
 
 
 class Customer(SQLModel, table=True):
@@ -79,6 +87,7 @@ class Plan(SQLModel, table=True):
     currency: str = Field(max_length=3)
     duration_days: int
     is_active: bool = Field(default=True)
+    token_limit: int = Field(default=40000)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -171,3 +180,25 @@ class PaymentEvent(SQLModel, table=True):
     user: User = Relationship(back_populates="payment_events")
     payment: Optional[Payment] = Relationship(back_populates="payment_events")
     subscription: Optional[Subscription] = Relationship(back_populates="payment_events")
+
+
+class TokenUsageLog(SQLModel, table=True):
+    log_id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="user.user_id", index=True)
+    notebook_id: Optional[str] = Field(default=None)
+    action: str = Field(max_length=50)
+    amount: int
+    balance_before: int
+    balance_after: int
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    user: User = Relationship(back_populates="token_usage_logs")
+
+
+class DeletedUser(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(max_length=255, index=True)
+    deleted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    previous_plan: str = Field(max_length=50)
+    tokens_remaining_at_deletion: int = Field(default=0)
+    razorpay_subscription_id: Optional[str] = Field(default=None, max_length=255)

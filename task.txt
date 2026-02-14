@@ -2,7 +2,6 @@
 --MVP:
 8. think on adding paywall for enpoints.
 9. voice polling logic improvement. poll continuous when something is processing.
-10. deleting the notes in postgres after deleting notebook. on cascade logic.
 
 --Stable release:
 11. Ads

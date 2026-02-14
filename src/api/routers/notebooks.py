@@ -26,6 +26,9 @@ from src.api.deps import (
 )
 from src.api.schema import Note, Notebook
 from src.api.utils import (
+    calculate_text_tokens,
+    check_token_availability,
+    deduct_tokens,
     get_job_status,
     get_session,
     get_unique_notebook_title,
@@ -71,17 +74,44 @@ async def upload_file(
     temp_path = upload_dir / f"{uuid4().hex}-{safe_disk_filename}"
     job_id = str(uuid4())
 
+    # Read file content and estimate tokens BEFORE saving
     total_size = 0
+    file_content = b""
+
+    while chunk := await file.read(1024 * 1024):
+        total_size += len(chunk)
+        if total_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // 1024 // 1024}MB.",
+            )
+        file_content += chunk
+
+    # Estimate tokens from file content (character count)
+    try:
+        estimated_tokens = calculate_text_tokens(file_content.decode("utf-8"))
+    except UnicodeDecodeError:
+        estimated_tokens = len(file_content)  # Fallback to byte count
+
+    # Check token availability
+    has_sufficient, available_tokens = check_token_availability(
+        session, user_id, estimated_tokens
+    )
+    if not has_sufficient:
+        raise HTTPException(
+            status_code=402,  # Payment Required
+            detail=f"Insufficient tokens. Required: {estimated_tokens}, Available: {available_tokens}. Please upgrade your plan.",
+        )
+
+    # Deduct tokens optimistically
+    if not deduct_tokens(session, user_id, estimated_tokens, job_id):
+        raise HTTPException(
+            status_code=402, detail="Failed to deduct tokens. Please try again."
+        )
+
+    # Save file to disk after token check passes
     with open(temp_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            total_size += len(chunk)
-            if total_size > MAX_FILE_SIZE:
-                os.remove(temp_path)  # Clean up the partially written file
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum size is {MAX_FILE_SIZE // 1024 // 1024}MB.",
-                )
-            f.write(chunk)
+        f.write(file_content)
 
     new_notebook = Notebook(
         user_id=user_id,
@@ -89,6 +119,8 @@ async def upload_file(
         title=unique_db_title,  # Use the unique, sanitized title
         voice=voice,
         status="queued",
+        tokens_requested=estimated_tokens,  # Track requested tokens
+        tokens_used=0,  # Will be updated during processing
     )
     session.add(new_notebook)
     session.commit()
@@ -96,12 +128,15 @@ async def upload_file(
 
     background_tasks.add_task(process_file_task, user_id, job_id, str(temp_path), voice)
 
-    logger.info(f"File uploaded for user {user_id}, job_id {job_id}")
+    logger.info(
+        f"File uploaded for user {user_id}, job_id {job_id}, tokens_requested: {estimated_tokens}"
+    )
 
     return {
         "message": "File uploaded. processing speech.",
         "voice": voice,
         "job_id": job_id,
+        "tokens_deducted": estimated_tokens,
     }
 
 

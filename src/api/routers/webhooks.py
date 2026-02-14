@@ -1,6 +1,7 @@
 import json
 import hmac
 import hashlib
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Depends, status
@@ -10,7 +11,8 @@ from svix.webhooks import Webhook, WebhookVerificationError
 
 from ..config import settings
 from ..utils import get_session
-from ..schema import User, PaymentEvent  # Assuming PaymentEvent is for logging
+from ..schema import User, PaymentEvent, Plan, Notebook, Subscription, DeletedUser
+from src.utils.payment_client import cancel_razorpay_subscription
 
 webhooks_router = APIRouter(
     prefix="/webhooks",
@@ -68,7 +70,8 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_session)):
             handle_user_created(data, db)
         elif event_type == "user.updated":
             handle_user_updated(data, db)
-        # Add more event types as needed (e.g., user.deleted)
+        elif event_type == "user.deleted":
+            handle_user_deleted(data, db)
         else:
             print(f"Unhandled Clerk webhook event type: {event_type}")
             # Optionally log unhandled events to DB or monitoring system
@@ -142,6 +145,32 @@ def handle_user_created(user_data: Dict[str, Any], db: Session):
         print(f"User {clerk_user_id} already exists, skipping creation.")
         return
 
+    # Check if this email was previously deleted (prevent token farming)
+    deleted_user = db.exec(
+        select(DeletedUser).where(DeletedUser.email == primary_email)
+    ).first()
+
+    # Get Explorer plan token limit for new users
+    explorer_plan = db.exec(select(Plan).where(Plan.name == "explorer")).first()
+    default_token_limit = explorer_plan.token_limit if explorer_plan else 40000
+
+    # Determine tokens based on previous deletion record
+    if deleted_user:
+        if deleted_user.previous_plan == "explorer":
+            # Explorer -> Explorer: restore old remaining tokens
+            token_limit = deleted_user.tokens_remaining_at_deletion
+        else:
+            # Creator/Professional -> Explorer: give 40k tokens (they lost their paid sub)
+            token_limit = default_token_limit
+        # Delete the DeletedUser record after processing
+        db.delete(deleted_user)
+        print(
+            f"Restored {token_limit} tokens for re-registered user (previous plan: {deleted_user.previous_plan})"
+        )
+    else:
+        # New user: give default explorer tokens
+        token_limit = default_token_limit
+
     try:
         new_user = User(
             user_id=clerk_user_id,
@@ -150,12 +179,16 @@ def handle_user_created(user_data: Dict[str, Any], db: Session):
             # password_hash is not handled by Clerk directly for external apps,
             # so it can be None or a dummy value.
             password_hash=None,
+            tokens_remaining=token_limit,
+            tokens_allocated=token_limit,
             # You might want to store first_name, last_name if your User model supports it
         )
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        print(f"User {clerk_user_id} created successfully in DB.")
+        print(
+            f"User {clerk_user_id} created successfully in DB with {token_limit} tokens."
+        )
     except Exception as e:
         db.rollback()
         print(f"Error creating user {clerk_user_id} in DB: {e}")
@@ -221,6 +254,78 @@ def handle_user_updated(user_data: Dict[str, Any], db: Session):
             # Log this error
     else:
         print(f"No changes detected for user {clerk_user_id}, skipping update.")
+
+
+def handle_user_deleted(user_data: Dict[str, Any], db: Session):
+    """
+    Handle user deletion from Clerk.
+    - Cancels active subscriptions in Razorpay (no refund)
+    - Deletes all notebooks and notes
+    - Soft deletes user with anonymization
+    """
+    clerk_user_id = user_data.get("id")
+    if not clerk_user_id:
+        print("Missing user ID for user.deleted webhook.")
+        return
+
+    user = db.exec(select(User).where(User.user_id == clerk_user_id)).first()
+    if not user:
+        print(f"User {clerk_user_id} not found for deletion.")
+        return
+
+    # Determine previous plan and save to DeletedUser table
+    active_sub = db.exec(
+        select(Subscription).where(
+            Subscription.user_id == clerk_user_id, Subscription.status == "active"
+        )
+    ).first()
+
+    previous_plan = "explorer"
+    razorpay_sub_id = None
+    if active_sub:
+        plan = db.exec(select(Plan).where(Plan.plan_id == active_sub.plan_id)).first()
+        if plan:
+            previous_plan = plan.name
+        razorpay_sub_id = active_sub.razorpay_subscription_id
+
+    # Save to DeletedUser table for token restoration logic
+    deleted_user_record = DeletedUser(
+        email=user.email,
+        previous_plan=previous_plan,
+        tokens_remaining_at_deletion=user.tokens_remaining,
+        razorpay_subscription_id=razorpay_sub_id,
+    )
+    db.add(deleted_user_record)
+
+    # Cancel active subscriptions in Razorpay (no refund)
+    active_subs = db.exec(
+        select(Subscription).where(
+            Subscription.user_id == clerk_user_id, Subscription.status == "active"
+        )
+    ).all()
+
+    for sub in active_subs:
+        try:
+            cancel_razorpay_subscription(sub.razorpay_subscription_id)
+            print(f"Cancelled Razorpay subscription: {sub.razorpay_subscription_id}")
+        except Exception as e:
+            print(f"Error cancelling subscription {sub.razorpay_subscription_id}: {e}")
+        sub.status = "cancelled"
+        sub.cancelled_at = datetime.now(timezone.utc)
+
+    # Delete notebooks (notes auto-delete via CASCADE)
+    notebooks = db.exec(select(Notebook).where(Notebook.user_id == clerk_user_id)).all()
+    for nb in notebooks:
+        db.delete(nb)
+    print(f"Deleted {len(notebooks)} notebooks for user {clerk_user_id}")
+
+    # Soft delete user - anonymize
+    user.deleted_at = datetime.now(timezone.utc)
+    user.email = f"deleted_{clerk_user_id[:8]}@wikivoice.local"
+    user.username = f"deleted_{clerk_user_id[:8]}"
+
+    db.commit()
+    print(f"User {clerk_user_id} soft deleted and anonymized.")
 
 
 # Helper to log events if PaymentEvent is intended for general logging

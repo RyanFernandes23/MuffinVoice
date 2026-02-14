@@ -14,6 +14,7 @@ from ..schema import (
     Subscription,
 )  # Import new models
 from ..utils import get_session  # Import get_session from utils
+from ..token_utils import reset_user_tokens  # Import token utilities from token_utils
 from ..deps import clerk_auth  # Import clerk_auth for JWT validation
 
 router = APIRouter(
@@ -146,8 +147,16 @@ def handle_subscription_activated(payload: dict, db: Session):
             )
         ).first()
 
-        start_dt = _convert_timestamp(subscription_data.get("start_at")) if subscription_data.get("start_at") else datetime.now(timezone.utc)
-        end_dt = _convert_timestamp(subscription_data.get("end_at")) if subscription_data.get("end_at") else datetime.now(timezone.utc)
+        start_dt = (
+            _convert_timestamp(subscription_data.get("start_at"))
+            if subscription_data.get("start_at")
+            else datetime.now(timezone.utc)
+        )
+        end_dt = (
+            _convert_timestamp(subscription_data.get("end_at"))
+            if subscription_data.get("end_at")
+            else datetime.now(timezone.utc)
+        )
 
         if existing_sub:
             existing_sub.status = "active"
@@ -176,6 +185,18 @@ def handle_subscription_activated(payload: dict, db: Session):
             event_description="Subscription successfully activated",
         )
         db.add(event_log)
+
+        # Reset user tokens to new plan limit
+        plan = db.exec(select(Plan).where(Plan.plan_id == plan_id)).first()
+        if plan:
+            reset_user_tokens(
+                session=db,
+                user_id=user_id,
+                new_token_limit=plan.token_limit,
+                reason="subscription_activated",
+            )
+            print(f"[WEBHOOK] Reset tokens to {plan.token_limit} for user {user_id}")
+
         db.commit()
 
         print(f"[WEBHOOK] Subscription {razorpay_sub_id} activated for user {user_id}")
@@ -201,9 +222,15 @@ def handle_subscription_updated(payload: dict, db: Session):
         ).first()
 
         if existing_sub:
-            end_dt = _convert_timestamp(subscription_data.get("end_at")) if subscription_data.get("end_at") else None
+            end_dt = (
+                _convert_timestamp(subscription_data.get("end_at"))
+                if subscription_data.get("end_at")
+                else None
+            )
             existing_sub.end_date = end_dt.date() if end_dt else existing_sub.end_date
-            existing_sub.auto_renew_enabled = subscription_data.get("auto_renew", existing_sub.auto_renew_enabled)
+            existing_sub.auto_renew_enabled = subscription_data.get(
+                "auto_renew", existing_sub.auto_renew_enabled
+            )
             existing_sub.updated_at = datetime.now(timezone.utc)
             db.add(existing_sub)
 
@@ -313,7 +340,9 @@ def handle_subscription_cancelled(payload: dict, db: Session):
         if existing_sub:
             existing_sub.status = "cancelled"
             existing_sub.cancelled_at = datetime.now(timezone.utc)
-            existing_sub.cancel_reason = subscription_data.get("short_url") or "Cancelled via webhook"
+            existing_sub.cancel_reason = (
+                subscription_data.get("short_url") or "Cancelled via webhook"
+            )
             existing_sub.updated_at = datetime.now(timezone.utc)
             db.add(existing_sub)
 
@@ -360,6 +389,20 @@ def handle_subscription_expired(payload: dict, db: Session):
                 event_description="Subscription period expired",
             )
             db.add(event_log)
+
+            # Reset user tokens to Explorer plan (40k tokens)
+            explorer_plan = db.exec(select(Plan).where(Plan.name == "explorer")).first()
+            if explorer_plan:
+                reset_user_tokens(
+                    session=db,
+                    user_id=user_id or existing_sub.user_id,
+                    new_token_limit=explorer_plan.token_limit,
+                    reason="subscription_expired",
+                )
+                print(
+                    f"[WEBHOOK] Subscription expired, reset to Explorer ({explorer_plan.token_limit} tokens) for user {user_id or existing_sub.user_id}"
+                )
+
             db.commit()
 
             print(f"[WEBHOOK] Subscription {razorpay_sub_id} expired")
@@ -399,7 +442,9 @@ def handle_subscription_halted(payload: dict, db: Session):
             db.add(event_log)
             db.commit()
 
-            print(f"[WEBHOOK] Subscription {razorpay_sub_id} halted due to payment failure")
+            print(
+                f"[WEBHOOK] Subscription {razorpay_sub_id} halted due to payment failure"
+            )
     except Exception as e:
         print(f"[WEBHOOK] Error handling subscription.halted: {str(e)}")
         db.rollback()
@@ -456,7 +501,9 @@ def handle_payment_authorized(payload: dict, db: Session):
         payment_id = safe_get(payment_data, "notes", "app_payment_id")
 
         if payment_id:
-            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            payment = db.exec(
+                select(Payment).where(Payment.payment_id == payment_id)
+            ).first()
             if payment:
                 payment.gateway_payment_id = razorpay_payment_id
                 payment.status = "authorized"
@@ -491,7 +538,9 @@ def handle_payment_captured(payload: dict, db: Session):
         payment_id = safe_get(payment_data, "notes", "app_payment_id")
 
         if payment_id:
-            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            payment = db.exec(
+                select(Payment).where(Payment.payment_id == payment_id)
+            ).first()
             if payment:
                 payment.gateway_payment_id = razorpay_payment_id
                 payment.status = "captured"
@@ -528,7 +577,9 @@ def handle_payment_failed(payload: dict, db: Session):
         error_description = payment_data.get("error_description")
 
         if payment_id:
-            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            payment = db.exec(
+                select(Payment).where(Payment.payment_id == payment_id)
+            ).first()
             if payment:
                 payment.gateway_payment_id = razorpay_payment_id
                 payment.status = "failed"
@@ -552,7 +603,9 @@ def handle_payment_failed(payload: dict, db: Session):
                 db.add(event_log)
                 db.commit()
 
-                print(f"[WEBHOOK] Payment {razorpay_payment_id} failed with error {error_code}")
+                print(
+                    f"[WEBHOOK] Payment {razorpay_payment_id} failed with error {error_code}"
+                )
     except Exception as e:
         print(f"[WEBHOOK] Error handling payment.failed: {str(e)}")
         db.rollback()
@@ -589,18 +642,22 @@ def handle_subscription_charged(payload: dict, db: Session):
     try:
         subscription_data = safe_get(payload, "subscription", "entity")
         payment_data = safe_get(payload, "payment", "entity")
-        
+
         if not subscription_data and not payment_data:
             return
 
         razorpay_sub_id = subscription_data.get("id") if subscription_data else None
         razorpay_payment_id = payment_data.get("id") if payment_data else None
         user_id = safe_get(subscription_data or payment_data, "notes", "app_user_id")
-        payment_id = safe_get(subscription_data or payment_data, "notes", "app_payment_id")
+        payment_id = safe_get(
+            subscription_data or payment_data, "notes", "app_payment_id"
+        )
 
         # Update payment if exists
         if payment_id:
-            payment = db.exec(select(Payment).where(Payment.payment_id == payment_id)).first()
+            payment = db.exec(
+                select(Payment).where(Payment.payment_id == payment_id)
+            ).first()
             if payment:
                 payment.status = "charged"
                 payment.gateway_payment_id = razorpay_payment_id
@@ -618,7 +675,9 @@ def handle_subscription_charged(payload: dict, db: Session):
         db.add(event_log)
         db.commit()
 
-        print(f"[WEBHOOK] Subscription {razorpay_sub_id} charged with payment {razorpay_payment_id}")
+        print(
+            f"[WEBHOOK] Subscription {razorpay_sub_id} charged with payment {razorpay_payment_id}"
+        )
     except Exception as e:
         print(f"[WEBHOOK] Error handling subscription.charged: {str(e)}")
         db.rollback()
@@ -638,11 +697,12 @@ def handle_unhandled_event(event_type: str, payload: dict, db: Session):
         # Only set subscription_id if it exists in the database to avoid foreign key constraint
         subscription_id_from_payload = safe_get(payload, "subscription", "entity", "id")
         subscription_id = None
-        
+
         if subscription_id_from_payload:
             existing_sub = db.exec(
                 select(Subscription).where(
-                    Subscription.razorpay_subscription_id == subscription_id_from_payload
+                    Subscription.razorpay_subscription_id
+                    == subscription_id_from_payload
                 )
             ).first()
             if existing_sub:

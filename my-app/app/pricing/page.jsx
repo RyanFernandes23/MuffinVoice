@@ -1,135 +1,265 @@
 "use client";
 
+import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Circle, Crown, Star, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useUser, useAuth } from "@clerk/nextjs";
 import Navbar from "../components/Navbar";
 
 const pricingPlans = [
   {
+    id: "explorer",
     name: "Explorer",
+    icon: Circle,
     price: "Free",
-    description: "Perfect for getting started with WikiVoice",
+    period: "",
+    fileSize: "50MB",
+    tokens: "40K",
+    color: "gray",
+    description: "Perfect for getting started",
     features: [
-      "5 articles per month",
-      "Basic text-to-speech",
-      "Standard voice options",
+      "50MB max file upload",
+      "40K tokens per month",
+      "Basic voice options",
       "Email support",
-      "Export to MP3"
+      "MP3 export"
     ],
-    cta: "Get Started",
+    cta: "Get Started Free",
     popular: false
   },
   {
+    id: "creator",
     name: "Creator",
+    icon: Crown,
     price: "$5",
     period: "/month",
+    fileSize: "150MB",
+    tokens: "400K",
+    color: "amber",
     description: "For content creators who need more power",
     features: [
-      "50 articles per month",
-      "Premium voice options",
-      "Custom pronunciation",
+      "150MB max file upload",
+      "400K tokens per month",
+      "All voice options",
       "Priority support",
-      "Export to MP3 & WAV",
+      "MP3 & WAV export",
       "Batch processing"
     ],
-    cta: "Subscribe",
+    cta: "Choose Plan",
     popular: true
   },
   {
+    id: "professional",
     name: "Professional",
+    icon: Star,
     price: "$12",
     period: "/month",
+    fileSize: "200MB",
+    tokens: "1.6M",
+    color: "purple",
     description: "For teams and power users",
     features: [
-      "Unlimited articles",
-      "All voice options including AI voices",
-      "API access",
+      "200MB max file upload",
+      "1.6M tokens per month",
+      "All voices including AI",
       "24/7 dedicated support",
       "All export formats",
-      "Team collaboration",
-      "Custom integrations"
+      "API access",
+      "Team collaboration"
     ],
-    cta: "Subscribe",
+    cta: "Choose Plan",
     popular: false
   }
 ];
 
-function PricingCard({ plan, onSubscribe }) { // Add onSubscribe prop
+const colorClasses = {
+  gray: {
+    border: "border-gray-500/20",
+    bg: "bg-gray-500/10",
+    text: "text-gray-400",
+    badgeBg: "bg-gray-500/20",
+    badgeBorder: "border-gray-500/30",
+    button: "bg-gray-600 hover:bg-gray-500",
+    ring: "ring-gray-500/30",
+  },
+  amber: {
+    border: "border-amber-500/20",
+    bg: "bg-amber-500/10",
+    text: "text-amber-400",
+    badgeBg: "bg-amber-500/20",
+    badgeBorder: "border-amber-500/30",
+    button: "bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400",
+    ring: "ring-amber-500/50",
+  },
+  purple: {
+    border: "border-purple-500/20",
+    bg: "bg-purple-500/10",
+    text: "text-purple-400",
+    badgeBg: "bg-purple-500/20",
+    badgeBorder: "border-purple-500/30",
+    button: "bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400",
+    ring: "ring-purple-500/30",
+  },
+};
+
+function PricingCard({ plan, onSubscribe, isCurrentPlan }) {
+  const Icon = plan.icon;
+  const colors = colorClasses[plan.color];
+
   return (
-    <div className={`relative glass-card rounded-xl p-5 transition-all duration-300 hover:transform hover:-translate-y-1 flex flex-col ${plan.popular ? 'ring-2 ring-primary glow-primary' : ''}`}>
+    <motion.div
+      whileHover={{ scale: 1.02, y: -5 }}
+      className={`
+        relative min-w-[300px] md:min-w-0 glass-card rounded-xl p-6 
+        border-2 transition-all duration-300 flex flex-col h-full
+        ${colors.border} ${colors.bg}
+        ${plan.popular ? `ring-2 ${colors.ring}` : ''}
+        ${isCurrentPlan ? 'ring-2 ring-white/30' : ''}
+      `}
+    >
+      {/* Badges */}
       {plan.popular && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-          <span className="bg-gradient-to-r from-primary to-accent text-white text-xs font-semibold px-3 py-0.5 rounded-full">
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+          <span className="px-3 py-1 text-xs font-semibold bg-gradient-to-r from-amber-500 to-amber-400 text-black rounded-full">
             Most Popular
           </span>
         </div>
       )}
-      <div className="text-center pt-2 mb-4">
-        <h3 className="text-lg font-bold text-foreground mb-1">{plan.name}</h3>
-        <div className="flex items-baseline justify-center gap-1 mb-2">
-          <span className="text-2xl font-bold text-gradient">{plan.price}</span>
-          {plan.period && <span className="text-gray-400 text-xs">{plan.period}</span>}
+      
+      {isCurrentPlan && (
+        <div className="absolute -top-3 right-4">
+          <span className="px-2 py-1 text-xs font-medium bg-white/20 text-white rounded border border-white/30">
+            Current Plan
+          </span>
         </div>
-        <p className="text-gray-400 text-xs">{plan.description}</p>
+      )}
+
+      {/* Header: Icon + Name */}
+      <div className="flex items-center gap-2 mb-4 pt-2">
+        <Icon className={`w-5 h-5 ${colors.text}`} />
+        <h3 className={`text-lg font-bold ${colors.text}`}>
+          {plan.name}
+        </h3>
       </div>
-      <ul className="space-y-2 mb-4 flex-1">
+
+      {/* Price */}
+      <div className="mb-4">
+        <div className="flex items-baseline gap-1">
+          <span className="text-3xl font-bold text-white">{plan.price}</span>
+          {plan.period && <span className="text-gray-400 text-sm">{plan.period}</span>}
+        </div>
+        <p className="text-gray-400 text-sm mt-1">{plan.description}</p>
+      </div>
+
+      {/* File Size & Tokens Badges */}
+      <div className="flex gap-2 mb-5">
+        <div className={`
+          flex-1 px-3 py-2 rounded-lg border text-center
+          ${colors.badgeBg} ${colors.badgeBorder} border
+        `}>
+          <div className={`text-lg font-bold ${colors.text}`}>{plan.fileSize}</div>
+          <div className="text-xs text-gray-400">max</div>
+        </div>
+        <div className={`
+          flex-1 px-3 py-2 rounded-lg border text-center
+          ${colors.badgeBg} ${colors.badgeBorder} border
+        `}>
+          <div className={`text-lg font-bold ${colors.text}`}>{plan.tokens}</div>
+          <div className="text-xs text-gray-400">tokens</div>
+        </div>
+      </div>
+
+      {/* Features */}
+      <ul className="space-y-3 mb-6 flex-1">
         {plan.features.map((feature, index) => (
           <li key={index} className="flex items-start gap-2">
-            <svg className="w-4 h-4 text-success flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-gray-300 text-xs">{feature}</span>
+            <Check className={`w-4 h-4 ${colors.text} flex-shrink-0 mt-0.5`} />
+            <span className="text-gray-300 text-sm">{feature}</span>
           </li>
         ))}
       </ul>
+
+      {/* CTA Button */}
       <button
-        onClick={() => { // Add onClick handler
-          if (plan.name !== "Explorer" && onSubscribe) { // Only call for Creator/Professional
+        onClick={() => {
+          if (plan.id !== "explorer" && onSubscribe) {
             onSubscribe(plan.name);
+          } else if (plan.id === "explorer") {
+            // Redirect to signup or dashboard for free plan
+            window.location.href = '/sign-up';
           }
         }}
-        className={`w-full py-2 rounded-lg font-medium transition-all duration-300 btn-hover-lift ${
-          plan.popular
-            ? 'bg-gradient-to-r from-primary to-accent text-white glow-primary'
-            : 'glass border border-glass-border text-foreground hover:bg-white/5'
-        }`}>
-        {plan.cta}
+        disabled={isCurrentPlan}
+        className={`
+          w-full py-2.5 rounded-lg font-medium text-white
+          transition-all duration-200
+          ${isCurrentPlan 
+            ? 'bg-white/10 text-gray-400 cursor-not-allowed' 
+            : colors.button
+          }
+        `}
+      >
+        {isCurrentPlan ? 'Current Plan' : plan.cta}
       </button>
-    </div>
+    </motion.div>
   );
 }
 
-import toast from 'react-hot-toast'; // Add this import
-import { useUser, useAuth } from "@clerk/nextjs"; // Import useUser and useAuth
-
 export default function PricingPage() {
-  const { user, isSignedIn } = useUser(); // Use the useUser hook
-  const { getToken } = useAuth(); // Get the getToken function to retrieve JWT
+  const { user, isSignedIn } = useUser();
+  const { getToken } = useAuth();
+  const [currentPlan, setCurrentPlan] = useState(null);
 
-  const handleSubscribe = async (planName, price) => { // Added price parameter
+  // Fetch user's current plan
+  useEffect(() => {
+    if (isSignedIn) {
+      fetchCurrentPlan();
+    }
+  }, [isSignedIn]);
+
+  const fetchCurrentPlan = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/usage', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setCurrentPlan(data.data.plan_name);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching current plan:', error);
+    }
+  };
+
+  const handleSubscribe = async (planName) => {
     if (!isSignedIn || !user || !user.id) {
       toast.error("Please sign in to subscribe.");
       return;
     }
 
-    // Show loading toast
     const loadingToastId = toast.loading(`Initiating ${planName} subscription...`);
 
     try {
-      // Get the JWT token from Clerk
       const token = await getToken();
       if (!token) {
         throw new Error("Failed to get authentication token");
       }
 
-      // 1. Call your backend to create the subscription
       const response = await fetch('/api/payment/create-subscription', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`, // Send JWT token in Authorization header
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ 
             plan_name: planName.toLowerCase(),
-            // user_id is no longer sent - it comes from the JWT token
         }) 
       });
 
@@ -139,37 +269,31 @@ export default function PricingPage() {
       }
 
       const data = await response.json();
-      const { razorpay_subscription_id, key_id, amount, currency } = data; // Destructure amount and currency
-
-      // Razorpay expects amount in paise (e.g., 500 for Rs 5)
+      const { razorpay_subscription_id, key_id, amount, currency } = data;
       const amountInPaise = Math.round(parseFloat(amount) * 100);
 
-      // 2. Open Razorpay Checkout
       const options = {
-        key: key_id, // Your Razorpay Key ID from backend
+        key: key_id,
         subscription_id: razorpay_subscription_id,
-        name: 'WikiVoice', // Your App Name
+        name: 'WikiVoice',
         description: `${planName} Plan Subscription`,
-        amount: amountInPaise, // Amount in paise
-        currency: currency, // Currency from backend
+        amount: amountInPaise,
+        currency: currency,
         handler: function (response) {
           toast.success('Payment successful! Your subscription is being activated.', { id: loadingToastId });
-          // In a real application, you might want to redirect the user or update their subscription status in the UI
-          // based on a backend confirmation (e.g., via a webhook processed event).
         },
         modal: {
           ondismiss: function() {
             toast.dismiss(loadingToastId);
-            toast.error('Payment process cancelled.'); // No need for id here
+            toast.error('Payment process cancelled.');
           }
         },
         prefill: {
-          name: user.fullName || "", // Prefill user name
-          email: user.primaryEmailAddress?.emailAddress || "", // Prefill user email
-          // contact: '9999999999' // If you have contact info
+          name: user.fullName || "",
+          email: user.primaryEmailAddress?.emailAddress || "",
         },
         theme: {
-          "color": "#6366F1" // Tailwind purple-500, or your theme color
+          "color": "#6366F1"
         }
       };
 
@@ -185,30 +309,60 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen overflow-x-hidden">
       <Navbar />
-<div className="pt-24 pb-16 px-4 sm:px-6 lg:px-8 min-h-screen">
+      <div className="pt-20 pb-8 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl sm:text-5xl font-bold text-foreground mb-4">
+          <div className="text-center mb-6 md:mb-8">
+            <motion.h1 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-3xl sm:text-4xl font-bold text-foreground mb-2"
+            >
               Simple, <span className="text-gradient">Transparent</span> Pricing
-            </h1>
-            <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-              Choose the perfect plan for your needs. All plans include our core features with no hidden fees.
-            </p>
+            </motion.h1>
+            <motion.p 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="text-lg text-gray-400 max-w-2xl mx-auto"
+            >
+              Choose the perfect plan for your needs
+            </motion.p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pb-8">
-            {pricingPlans.map((plan) => (
-              <PricingCard key={plan.name} plan={plan} onSubscribe={handleSubscribe} />
+          
+          {/* Pricing Cards - Horizontal scroll on mobile, grid on desktop */}
+          <div className="flex md:grid md:grid-cols-3 gap-6 overflow-x-auto md:overflow-visible snap-x snap-mandatory pb-24 md:pb-8 -mx-4 px-4 md:mx-0 md:px-0 h-auto items-stretch">
+            {pricingPlans.map((plan, index) => (
+              <motion.div
+                key={plan.name}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="snap-center"
+              >
+                <PricingCard 
+                  plan={plan} 
+                  onSubscribe={handleSubscribe}
+                  isCurrentPlan={currentPlan === plan.id}
+                />
+              </motion.div>
             ))}
           </div>
-          <div className="mt-16 text-center pb-8">
+          
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="mt-8 md:mt-12 text-center"
+          >
             <p className="text-gray-400">
-              Have questions? <a href="#" className="text-primary hover:text-accent transition-colors">Contact our sales team</a>
+              Have questions?{' '}
+              <a href="mailto:support@wikivoice.com" className="text-primary hover:text-accent transition-colors">
+                Contact our team
+              </a>
             </p>
-          </div>
+          </motion.div>
         </div>
       </div>
     </div>
   );
 }
-
-

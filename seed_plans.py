@@ -9,6 +9,7 @@ Usage:
 
 Required Environment Variables:
     - DATABASE_URL: PostgreSQL connection string
+    - (Optional) RAZORPAY_EXPLORER_PLAN_ID: Razorpay plan ID for Explorer plan
     - (Optional) RAZORPAY_CREATOR_PLAN_ID: Razorpay plan ID for Creator plan
     - (Optional) RAZORPAY_PROFESSIONAL_PLAN_ID: Razorpay plan ID for Professional plan
 """
@@ -29,30 +30,44 @@ load_dotenv()
 
 # Configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
+EXPLORER_PLAN_ID = os.getenv("RAZORPAY_EXPLORER_PLAN_ID", "")
 CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID", "")
 PROFESSIONAL_PLAN_ID = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID", "")
 
 # Plan definitions
 PLANS = [
     {
+        "plan_id": "plan_explorer",
+        "name": "explorer",
+        "description": "Free tier with 40k tokens/month. No audio download. Max file size: 50MB. Basic voice options and email support.",
+        "price": Decimal("0.00"),
+        "currency": "USD",
+        "duration_days": 30,
+        "is_active": True,
+        "razorpay_plan_id": EXPLORER_PLAN_ID,
+        "token_limit": 40000,
+    },
+    {
         "plan_id": "plan_creator",
         "name": "creator",
-        "description": "Perfect for content creators. 50 articles per month, premium voices, custom pronunciation.",
+        "description": "400k tokens/month for $5. Audio download enabled. Max file size: 100MB. All voice options, priority support.",
         "price": Decimal("5.00"),
         "currency": "USD",
         "duration_days": 30,
         "is_active": True,
         "razorpay_plan_id": CREATOR_PLAN_ID,
+        "token_limit": 400000,
     },
     {
         "plan_id": "plan_professional",
         "name": "professional",
-        "description": "For teams and power users. Unlimited articles, all voices, API access, team collaboration.",
+        "description": "1.6M tokens/month for $12. Audio download enabled. Max file size: 150MB. All voices including AI, 24/7 dedicated support, team collaboration.",
         "price": Decimal("12.00"),
         "currency": "USD",
         "duration_days": 30,
         "is_active": True,
         "razorpay_plan_id": PROFESSIONAL_PLAN_ID,
+        "token_limit": 1600000,
     },
 ]
 
@@ -86,6 +101,7 @@ def seed_plans():
                 existing.currency = plan_data["currency"]
                 existing.duration_days = plan_data["duration_days"]
                 existing.is_active = plan_data["is_active"]
+                existing.token_limit = plan_data["token_limit"]
                 if plan_data["razorpay_plan_id"]:
                     existing.razorpay_plan_id = plan_data["razorpay_plan_id"]
                 session.add(existing)
@@ -115,10 +131,16 @@ def seed_plans():
 
     print("[SUCCESS] Plans seeded successfully!")
     print("\n[INFO] Seeded Plans:")
-    print("   - Creator: $5.00/month (50 articles, premium voices)")
-    print("   - Professional: $12.00/month (Unlimited, API access, team features)")
+    print("   - Explorer: $0.00/month (40k tokens, no download, 50MB max file)")
+    print("   - Creator: $5.00/month (400k tokens, download enabled, 100MB max file)")
+    print(
+        "   - Professional: $12.00/month (1.6M tokens, download enabled, 150MB max file)"
+    )
 
     # Check if Razorpay plan IDs are set
+    if not EXPLORER_PLAN_ID:
+        print("\n[WARNING] RAZORPAY_EXPLORER_PLAN_ID not set")
+        print("   Add this to your .env file from your Razorpay Dashboard")
     if not CREATOR_PLAN_ID:
         print("\n[WARNING] RAZORPAY_CREATOR_PLAN_ID not set")
         print("   Add this to your .env file from your Razorpay Dashboard")
@@ -126,14 +148,56 @@ def seed_plans():
         print("\n[WARNING] RAZORPAY_PROFESSIONAL_PLAN_ID not set")
         print("   Add this to your .env file from your Razorpay Dashboard")
 
-    if not CREATOR_PLAN_ID or not PROFESSIONAL_PLAN_ID:
+    if not EXPLORER_PLAN_ID or not CREATOR_PLAN_ID or not PROFESSIONAL_PLAN_ID:
         print("\n[TIP] To get Razorpay Plan IDs:")
         print("   1. Go to Razorpay Dashboard -> Subscriptions -> Plans")
-        print("   2. Create plans for Creator ($5) and Professional ($12)")
+        print(
+            "   2. Create plans for Explorer ($0), Creator ($5) and Professional ($12)"
+        )
         print("   3. Copy the Plan IDs and add them to your .env file:")
+        print("      RAZORPAY_EXPLORER_PLAN_ID=plan_xxxxxx")
         print("      RAZORPAY_CREATOR_PLAN_ID=plan_xxxxxx")
         print("      RAZORPAY_PROFESSIONAL_PLAN_ID=plan_xxxxxx")
 
 
+def verify_seed_data(engine):
+    """Verify that all required seed data exists."""
+    print("\n[INFO] Verifying seed data...")
+    all_valid = True
+
+    with Session(engine) as session:
+        # Check all plans exist
+        for plan_data in PLANS:
+            plan = session.exec(
+                select(Plan).where(Plan.plan_id == plan_data["plan_id"])
+            ).first()
+            if not plan:
+                print(f"   [ERROR] Plan '{plan_data['plan_id']}' is missing!")
+                all_valid = False
+            else:
+                print(
+                    f"   [OK] Plan '{plan_data['name']}' exists with {plan.token_limit} tokens"
+                )
+
+        # Check system user exists
+        system_user = session.exec(select(User).where(User.user_id == "system")).first()
+        if not system_user:
+            print("   [ERROR] System user is missing!")
+            all_valid = False
+        else:
+            print("   [OK] System user exists")
+
+    if all_valid:
+        print("\n[SUCCESS] All seed data verified successfully!")
+        return True
+    else:
+        print("\n[WARNING] Some seed data is missing. Please run seeding again.")
+        return False
+
+
 if __name__ == "__main__":
     seed_plans()
+    # Verify after seeding
+    if DATABASE_URL:
+        engine = create_engine(DATABASE_URL, echo=False)
+        verify_seed_data(engine)

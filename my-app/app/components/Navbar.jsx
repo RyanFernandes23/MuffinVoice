@@ -1,18 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
+import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { Sparkles, Tag, LayoutDashboard, Menu, X } from 'lucide-react';
+import { PlanWidget } from './widgets/PlanWidget';
+import { UsageWidget } from './widgets/UsageWidget';
+import { UpgradeModal } from './modals/UpgradeModal';
 
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const { getToken } = useAuth();
   
 
   return (
-    <nav className="glass fixed top-0 left-0 right-0 z-50 px-4 md:px-6 py-3 border-b border-white/10">
+    <nav className="glass fixed top-0 left-0 right-0 z-50 px-4 md:px-6 py-2 border-b border-white/10">
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         {/* Logo with animation */}
         <motion.div
@@ -29,12 +34,12 @@ export default function Navbar() {
             transition={{ duration: 3, repeat: Infinity }}
             className="relative"
           >
-            <Sparkles className="w-6 h-6 text-primary-glow" />
-            <div className="absolute inset-0 w-6 h-6 text-primary-glow blur-sm animate-pulse" />
+            <Sparkles className="w-5 h-5 text-primary-glow" />
+            <div className="absolute inset-0 w-5 h-5 text-primary-glow blur-sm animate-pulse" />
           </motion.div>
           <Link 
             href="/" 
-            className="text-xl font-bold bg-gradient-to-r from-white via-primary-glow to-accent-glow bg-clip-text text-transparent hover:opacity-80 transition-all duration-300"
+            className="text-lg font-bold bg-gradient-to-r from-white via-primary-glow to-accent-glow bg-clip-text text-transparent hover:opacity-80 transition-all duration-300"
           >
             WikiVoice
           </Link>
@@ -49,7 +54,7 @@ export default function Navbar() {
         >
           <Link
           href="/dashboard"
-          className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
+          className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
         >
           <LayoutDashboard className="w-4 h-4" />
           <span>Dashboard</span>
@@ -57,24 +62,26 @@ export default function Navbar() {
           
           <Link
             href="/pricing"
-            className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
+            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
           >
             <Tag className="w-4 h-4" />
             <span>Pricing</span>
           </Link>
           
           <SignedIn>
-            <div className="flex items-center gap-3 ml-2 pl-4 border-l border-white/10">
+            <div className="flex items-center gap-2 ml-2 pl-3 border-l border-white/10">
+              <PlanWidget onClick={() => setIsUpgradeModalOpen(true)} />
+              <UsageWidget getToken={getToken} />
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className="relative"
+                className="relative ml-1"
               >
                 <UserButton 
                   afterSignOutUrl="/"
                   appearance={{
                     elements: {
-                      avatarBox: "w-10 h-10 ring-2 ring-primary/50 ring-offset-2 ring-offset-background rounded-full",
+                      avatarBox: "w-9 h-9 ring-2 ring-primary/50 ring-offset-2 ring-offset-background rounded-full",
                       userButtonBox: "hover:scale-105 transition-transform duration-200",
                     },
                   }}
@@ -84,11 +91,11 @@ export default function Navbar() {
           </SignedIn>
           
           <SignedOut>
-            <div className="flex items-center gap-2 ml-4 pl-4 border-l border-white/10">
+            <div className="flex items-center gap-2 ml-3 pl-3 border-l border-white/10">
               <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                 <Link 
                   href="/sign-in" 
-                  className="px-4 py-2 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
+                  className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
                 >
                   Sign In
                 </Link>
@@ -96,7 +103,7 @@ export default function Navbar() {
               <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                 <Link 
                   href="/sign-up" 
-                  className="bg-gradient-to-r from-primary to-accent text-white font-semibold px-5 py-2.5 rounded-xl hover:shadow-lg hover:shadow-primary/30 transition-all duration-300"
+                  className="bg-gradient-to-r from-primary to-accent text-white font-semibold px-4 py-2 rounded-lg text-sm hover:shadow-lg hover:shadow-primary/30 transition-all duration-300"
                 >
                   Get Started
                 </Link>
@@ -148,8 +155,19 @@ export default function Navbar() {
               </Link>
               
               <SignedIn>
-                <div className="pt-2 border-t border-white/10">
+                <div className="pt-2 border-t border-white/10 space-y-3">
                   <div className="flex items-center justify-between mt-3 px-4">
+                    <span className="text-gray-400">Plan</span>
+                    <PlanWidget onClick={() => {
+                      setIsUpgradeModalOpen(true);
+                      setIsMobileMenuOpen(false);
+                    }} />
+                  </div>
+                  <div className="flex items-center justify-between px-4">
+                    <span className="text-gray-400">Usage</span>
+                    <UsageWidget getToken={getToken} />
+                  </div>
+                  <div className="flex items-center justify-between px-4 pt-2 border-t border-white/10">
                     <span className="text-gray-400">Account</span>
                     <UserButton 
                       afterSignOutUrl="/"
@@ -189,6 +207,11 @@ export default function Navbar() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <UpgradeModal 
+        isOpen={isUpgradeModalOpen} 
+        onClose={() => setIsUpgradeModalOpen(false)} 
+      />
     </nav>
   );
 }
