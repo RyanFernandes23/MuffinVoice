@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
@@ -269,6 +270,118 @@ async def upload_webpage(
         "tokens_deducted": estimated_tokens,
         "extracted_chars": len(extracted_text),
         "source_url": url,
+    }
+
+
+@notebooks_router.post("/upload_text")
+async def upload_text(
+    background_tasks: BackgroundTasks,
+    request: dict,
+    voice: str = Header("af_bella", alias="voice"),
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
+):
+    """
+    Upload text content directly and process it for TTS.
+
+    Request body:
+        text: The text content to convert (required)
+        title: Optional custom title for the notebook
+
+    Headers:
+        voice: Voice to use for TTS (default: af_bella)
+    """
+    user_id = token_payload.decoded.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user ID")
+
+    # Extract text and title from request
+    text = request.get("text", "")
+    custom_title = request.get("title", "").strip()
+
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Text content is required")
+
+    text = text.strip()
+
+    # Calculate tokens from character count
+    estimated_tokens = calculate_text_tokens(text)
+
+    # Check token availability
+    has_sufficient, available_tokens = check_token_availability(
+        session, user_id, estimated_tokens
+    )
+    if not has_sufficient:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient tokens. Required: {estimated_tokens}, Available: {available_tokens}. Please upgrade your plan.",
+        )
+
+    upload_dir = Path("uploads")
+    upload_dir.mkdir(exist_ok=True)
+
+    job_id = str(uuid4())
+
+    # Deduct tokens optimistically
+    if not deduct_tokens(session, user_id, estimated_tokens, job_id):
+        raise HTTPException(
+            status_code=402, detail="Failed to deduct tokens. Please try again."
+        )
+
+    # Save text to file
+    timestamp = int(time.time())
+    filename = f"text_input_{timestamp}.txt"
+    temp_path = upload_dir / filename
+
+    with open(temp_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    # Generate title
+    if custom_title:
+        base_title = custom_title
+    else:
+        # Use first line or first 50 characters
+        first_line = text.split("\n")[0].strip()
+        if len(first_line) > 50:
+            base_title = first_line[:50] + "..."
+        elif first_line:
+            base_title = first_line
+        else:
+            from datetime import datetime
+
+            base_title = f"Text Input - {datetime.now().strftime('%b %d, %Y')}"
+
+    unique_db_title = get_unique_notebook_title(user_id, base_title, session)
+
+    # Create notebook entry
+    new_notebook = Notebook(
+        user_id=user_id,
+        job_id=job_id,
+        title=unique_db_title,
+        voice=voice,
+        status="queued",
+        tokens_requested=estimated_tokens,
+        tokens_used=0,
+        source_url=None,
+    )
+    session.add(new_notebook)
+    session.commit()
+    set_job_status(job_id, "queued")
+
+    # Process the text
+    background_tasks.add_task(process_file_task, user_id, job_id, str(temp_path), voice)
+
+    logger.info(
+        f"Text uploaded for user {user_id}, job_id {job_id}, tokens_requested: {estimated_tokens}"
+    )
+
+    return {
+        "message": "Text uploaded and processing started.",
+        "voice": voice,
+        "job_id": job_id,
+        "tokens_deducted": estimated_tokens,
+        "char_count": len(text),
+        "title": unique_db_title,
     }
 
 

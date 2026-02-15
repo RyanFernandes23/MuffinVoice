@@ -1,8 +1,6 @@
 
 ----------------------------------------todo-------------------------------------------------------------
-5. if kokoro not available then processing should not keep spinning. we need to throw error please try again.
 --MVP:
-9. voice polling logic improvement. poll continuous when something is processing.
 10. centralized instances of redis_client and s3_client.
 
 --Stable release:

@@ -2,7 +2,7 @@
 import { useAuth } from '@clerk/nextjs';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileText, Mic, X, UploadCloud, Trash2, Globe, Link, Loader2 } from 'lucide-react';
+import { FileText, Mic, X, UploadCloud, Trash2, Globe, Link, Loader2, Type } from 'lucide-react';
 import { FileTooLargeModal } from './modals/FileTooLargeModal';
 
 const API_BASE_URL = typeof window !== 'undefined'
@@ -10,8 +10,8 @@ const API_BASE_URL = typeof window !== 'undefined'
   : 'http://localhost:8000';
 
 
-export default function UploadModal({ isOpen, onClose, onUpload }) {
-  const [activeTab, setActiveTab] = useState('file'); // 'file' or 'url'
+export default function UploadModal({ isOpen, onClose, onUpload, initialText = '' }) {
+  const [activeTab, setActiveTab] = useState('file'); // 'file', 'url', or 'text'
   
   // File upload state
   const [file, setFile] = useState(null);
@@ -19,6 +19,11 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
   // URL upload state
   const [url, setUrl] = useState('');
   const [isUrlValid, setIsUrlValid] = useState(false);
+  
+  // Text upload state
+  const [textContent, setTextContent] = useState(initialText);
+  const [textTitle, setTextTitle] = useState('');
+  const [remainingTokens, setRemainingTokens] = useState(0);
   
   // Common state
   const [isUploading, setIsUploading] = useState(false);
@@ -49,6 +54,14 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     }
   }, [isOpen]);
 
+  // Set initial text if provided and switch to text tab
+  useEffect(() => {
+    if (initialText && isOpen) {
+      setTextContent(initialText);
+      setActiveTab('text');
+    }
+  }, [initialText, isOpen]);
+
   const fetchUserLimits = async () => {
     try {
       const token = await getToken();
@@ -62,6 +75,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
         const data = await response.json();
         if (data.success) {
           setCurrentPlan(data.data.plan_name || 'explorer');
+          setRemainingTokens(data.data.remaining || 0);
           const maxMB = data.data.max_file_size_mb || 50;
           setMaxFileSize(maxMB * 1024 * 1024);
         }
@@ -76,6 +90,8 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     if (!isOpen) {
       setFile(null);
       setUrl('');
+      setTextContent('');
+      setTextTitle('');
       setIsUrlValid(false);
       setError(null);
       setIsUploading(false);
@@ -101,6 +117,12 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
 
   const MAX_FILE_SIZE_MB = Math.round(maxFileSize / (1024 * 1024));
   const MAX_FILE_SIZE = maxFileSize;
+
+  // Calculate tokens from text
+  const textCharCount = textContent.length;
+  const textTokenCount = textCharCount; // 1 char = 1 token
+  const tokensAfterText = remainingTokens - textTokenCount;
+  const exceedsTokens = textTokenCount > remainingTokens;
 
   const validateAndSetFile = (selectedFile) => {
     const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
@@ -240,15 +262,65 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
     }
   };
 
-  const handleUpload = () => {
-    if (activeTab === 'file') {
-      handleFileUpload();
-    } else {
-      handleUrlUpload();
+  const handleTextUpload = async () => {
+    if (!textContent.trim()) {
+      setError("Please enter some text.");
+      return;
+    }
+
+    if (exceedsTokens) {
+      setError(`Text exceeds your token balance. You need ${textTokenCount.toLocaleString()} tokens but only have ${remainingTokens.toLocaleString()}.`);
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      const token = await getToken();
+      const response = await fetch(`${API_BASE_URL}/api/upload_text`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'voice': selectedVoice,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          text: textContent,
+          title: textTitle.trim() || undefined,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        onUpload(result.title, result.voice, result.job_id);
+        onClose();
+      } else if (response.status === 402) {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.detail || 'Insufficient tokens. Please upgrade your plan.');
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.detail || 'Failed to process text. Please try again.');
+      }
+    } catch (error) {
+      console.error('Network error during text upload:', error);
+      setError('Error processing text. Please check your network connection and try again.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const canUpload = activeTab === 'file' ? !!file : isUrlValid;
+  const handleUpload = () => {
+    if (activeTab === 'file') {
+      handleFileUpload();
+    } else if (activeTab === 'url') {
+      handleUrlUpload();
+    } else {
+      handleTextUpload();
+    }
+  };
+
+  const canUpload = activeTab === 'file' ? !!file : activeTab === 'url' ? isUrlValid : !!textContent.trim() && !exceedsTokens;
 
   return (
     <>
@@ -265,11 +337,11 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 50 }}
               transition={{ type: "spring", damping: 20, stiffness: 300 }}
-              className="glass-card rounded-2xl p-8 shadow-2xl w-full max-w-lg relative border border-white/10"
+              className="glass-card rounded-2xl p-8 shadow-2xl w-full max-w-2xl relative border border-white/10 max-h-[90vh] overflow-y-auto"
             >
               <button
                 onClick={onClose}
-                className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+                className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors z-10"
               >
                 <X size={24} />
               </button>
@@ -299,6 +371,17 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
                 >
                   <Globe size={18} />
                   <span>Paste URL</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('text')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${
+                    activeTab === 'text'
+                      ? 'bg-primary-glow text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Type size={18} />
+                  <span>Type Text</span>
                 </button>
               </div>
 
@@ -349,7 +432,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
                       )}
                     </div>
                   </motion.div>
-                ) : (
+                ) : activeTab === 'url' ? (
                   <motion.div
                     key="url-tab"
                     initial={{ opacity: 0, x: 20 }}
@@ -391,6 +474,73 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
                       <p className="text-xs text-gray-400">
                         <strong className="text-gray-300">Works great with:</strong> Wikipedia, Medium, news sites, blogs, documentation, and most article-based websites.
                       </p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="text-tab"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="space-y-4"
+                  >
+                    {/* Title Input */}
+                    <div>
+                      <label htmlFor="text-title" className="block text-sm font-medium text-foreground mb-2">
+                        Title <span className="text-gray-500">(optional)</span>
+                      </label>
+                      <input
+                        id="text-title"
+                        type="text"
+                        value={textTitle}
+                        onChange={(e) => setTextTitle(e.target.value)}
+                        placeholder="Auto-generated from first line"
+                        className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-glow text-white placeholder-gray-500 transition-colors"
+                        disabled={isUploading}
+                      />
+                    </div>
+
+                    {/* Text Area */}
+                    <div>
+                      <label htmlFor="text-content" className="block text-sm font-medium text-foreground mb-2">
+                        Text Content
+                      </label>
+                      <textarea
+                        id="text-content"
+                        value={textContent}
+                        onChange={(e) => setTextContent(e.target.value)}
+                        placeholder="Type or paste your text here..."
+                        className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-glow text-white placeholder-gray-500 transition-colors resize-none"
+                        rows={8}
+                        disabled={isUploading}
+                      />
+                      
+                      {/* Token Counter */}
+                      <div className="flex justify-between items-center mt-2 text-xs">
+                        <span className={exceedsTokens ? 'text-red-400' : 'text-gray-400'}>
+                          {textCharCount.toLocaleString()} characters
+                        </span>
+                        <span className={exceedsTokens ? 'text-red-400 font-medium' : tokensAfterText < remainingTokens * 0.1 ? 'text-amber-400' : 'text-gray-400'}>
+                          {textTokenCount.toLocaleString()} tokens used
+                          {remainingTokens > 0 && (
+                            <span className="text-gray-500 ml-1">
+                              ({tokensAfterText.toLocaleString()} remaining)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      
+                      {exceedsTokens && (
+                        <p className="text-xs text-red-400 mt-1">
+                          Text exceeds your available tokens. Please reduce the text or upgrade your plan.
+                        </p>
+                      )}
+                      {tokensAfterText >= 0 && tokensAfterText < remainingTokens * 0.1 && !exceedsTokens && (
+                        <p className="text-xs text-amber-400 mt-1">
+                          Warning: You are approaching your token limit.
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -444,14 +594,16 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
                   {isUploading ? (
                     <>
                       <Loader2 className="animate-spin h-5 w-5" />
-                      {activeTab === 'file' ? 'Uploading...' : 'Extracting...'}
+                      {activeTab === 'file' ? 'Uploading...' : activeTab === 'url' ? 'Extracting...' : 'Processing...'}
                     </>
                   ) : (
                     <>
                       {activeTab === 'file' ? (
                         <><UploadCloud size={20} /> Upload</>
-                      ) : (
+                      ) : activeTab === 'url' ? (
                         <><Globe size={20} /> Process URL</>
+                      ) : (
+                        <><Type size={20} /> Convert to Audio</>
                       )}
                     </>
                   )}

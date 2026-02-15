@@ -16,6 +16,7 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
+import QuickTextInput from '../components/QuickTextInput';
 import { useNotebookStatus } from '../hooks/useNotebookStatus';
 
 
@@ -60,6 +61,7 @@ export default function DashboardPage() {
 
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadModalInitialText, setUploadModalInitialText] = useState('');
 
   // Player State
   const [currentNotebook, setCurrentNotebook] = useState(null);
@@ -105,6 +107,18 @@ export default function DashboardPage() {
   const handleUploadComplete = async () => {
     await refresh();
   };
+
+  const handleTextSubmit = useCallback((result) => {
+    if (result.openModal) {
+      // Open upload modal with pre-filled text
+      setUploadModalInitialText(result.initialText || '');
+      setIsUploadModalOpen(true);
+    } else {
+      // Text was submitted successfully, refresh the list
+      refresh();
+      toast.success('Text conversion started!');
+    }
+  }, [refresh]);
 
   /* ----------------------------------------------
      Play Notebook (fetch subtitles + open player)
@@ -216,6 +230,16 @@ export default function DashboardPage() {
         </motion.div>
 
 
+
+        {/* Quick Text Input Widget */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.8, delay: 0.3 }}
+          className="container mx-auto px-4 md:px-6 pt-8"
+        >
+          <QuickTextInput onTextSubmit={handleTextSubmit} />
+        </motion.div>
 
         {/* Notebook Grid */}
         <motion.div
@@ -355,8 +379,12 @@ export default function DashboardPage() {
       {/* Upload */}
       <UploadModal
         isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
+        onClose={() => {
+          setIsUploadModalOpen(false);
+          setUploadModalInitialText('');
+        }}
         onUpload={handleUploadComplete}
+        initialText={uploadModalInitialText}
       />
     </div>
   );
