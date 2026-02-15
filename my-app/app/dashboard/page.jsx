@@ -302,7 +302,7 @@ export default function DashboardPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.1 * i }}
                 >
-                  <NotebookCard
+                   <NotebookCard
                     title={nb.title}
                     voice={nb.voice}
                     status={nb.status}
@@ -310,6 +310,7 @@ export default function DashboardPage() {
                     userId={nb.user_id}
                     jobId={nb.job_id}
                     getToken={getToken}
+                    sourceUrl={nb.source_url}
                     onOpen={() => playNotebook(nb)}
                     onDelete={() => deleteNotebook(nb.job_id)}
                   />

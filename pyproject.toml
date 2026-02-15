@@ -34,4 +34,7 @@ dependencies = [
     "pycln>=2.6.0",
     "pydantic-settings>=2.12.0",
     "svix>=1.84.1",
+    "trafilatura>=2.0.0",
+    "beautifulsoup4>=4.12.0",
+    "playwright>=1.50.0",
 ]

@@ -40,6 +40,7 @@ from src.api.utils import (
     sanitize_display_filename,
     set_job_status,
 )
+from src.TextExtractor.web_extractor import WebpageExtractor
 from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
@@ -141,6 +142,133 @@ async def upload_file(
         "voice": voice,
         "job_id": job_id,
         "tokens_deducted": estimated_tokens,
+    }
+
+
+@notebooks_router.post("/upload_webpage")
+async def upload_webpage(
+    background_tasks: BackgroundTasks,
+    url: str = Header(..., alias="url"),
+    voice: str = Header("af_bella", alias="voice"),
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
+):
+    """
+    Extract text from a webpage URL and process it for TTS.
+
+    Headers:
+        url: The webpage URL to extract from (required)
+        voice: Voice to use for TTS (default: af_bella)
+    """
+    user_id = token_payload.decoded.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user ID")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+
+    # Validate URL format
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if not all([parsed.scheme in ["http", "https"], parsed.netloc]):
+            raise HTTPException(status_code=400, detail="Invalid URL format")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid URL format")
+
+    upload_dir = Path("uploads")
+    upload_dir.mkdir(exist_ok=True)
+
+    job_id = str(uuid4())
+
+    # Create webpage extractor
+    extractor = WebpageExtractor(url)
+
+    # Extract text from webpage (use dynamic loading by default for better compatibility)
+    try:
+        extracted_text = await extractor.extract(
+            use_dynamic=True,  # Always use dynamic loading for better JS site support
+            css_selector=None,  # No custom selector, use auto-detection
+            timeout=30,
+        )
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail=f"Request timeout: {str(e)}")
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=f"Cannot access webpage: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error extracting from {url}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to extract content: {str(e)}"
+        )
+
+    # Check if content was extracted
+    if not extracted_text or len(extracted_text.strip()) < 50:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract meaningful content from the webpage. The page might be protected or have no readable content.",
+        )
+
+    # Estimate tokens
+    estimated_tokens = calculate_text_tokens(extracted_text)
+
+    # Check token availability
+    has_sufficient, available_tokens = check_token_availability(
+        session, user_id, estimated_tokens
+    )
+    if not has_sufficient:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient tokens. Required: {estimated_tokens}, Available: {available_tokens}. Please upgrade your plan.",
+        )
+
+    # Deduct tokens optimistically
+    if not deduct_tokens(session, user_id, estimated_tokens, job_id):
+        raise HTTPException(
+            status_code=402, detail="Failed to deduct tokens. Please try again."
+        )
+
+    # Save extracted text to file
+    temp_path = extractor.save_to_file(extracted_text, str(upload_dir))
+
+    # Create title from URL domain
+    domain = parsed.netloc.replace("www.", "")
+    base_title = f"Webpage: {domain}"
+    unique_db_title = get_unique_notebook_title(user_id, base_title, session)
+
+    # Create notebook entry
+    new_notebook = Notebook(
+        user_id=user_id,
+        job_id=job_id,
+        title=unique_db_title,
+        voice=voice,
+        status="queued",
+        tokens_requested=estimated_tokens,
+        tokens_used=0,
+        source_url=url,  # Store the source URL
+    )
+    session.add(new_notebook)
+    session.commit()
+    set_job_status(job_id, "queued")
+
+    # Process the extracted text
+    background_tasks.add_task(process_file_task, user_id, job_id, temp_path, voice)
+
+    logger.info(
+        f"Webpage uploaded for user {user_id}, job_id {job_id}, url: {url}, tokens_requested: {estimated_tokens}"
+    )
+
+    return {
+        "message": "Webpage content extracted and processing started.",
+        "voice": voice,
+        "job_id": job_id,
+        "tokens_deducted": estimated_tokens,
+        "extracted_chars": len(extracted_text),
+        "source_url": url,
     }
 
 

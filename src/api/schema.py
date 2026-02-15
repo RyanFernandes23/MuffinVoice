@@ -17,6 +17,9 @@ class Notebook(SQLModel, table=True):
     status: str = Field(default="processing")
     tokens_used: int = Field(default=0)
     tokens_requested: int = Field(default=0)
+    source_url: Optional[str] = Field(
+        default=None, max_length=2048
+    )  # Store webpage source URL
 
     user: Optional["User"] = Relationship(back_populates="notebooks")
     notes: List["Note"] = Relationship(back_populates="notebook", cascade_delete=True)

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MoreHorizontal, Play, Trash2, X, FileText, CheckCircle, XCircle, Clock, Loader2, StickyNote, Mic } from 'lucide-react';
+import { MoreHorizontal, Play, Trash2, X, FileText, CheckCircle, XCircle, Clock, Loader2, StickyNote, Mic, Globe } from 'lucide-react';
 
 const API_BASE_URL = typeof window !== 'undefined' 
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
@@ -18,7 +18,8 @@ export default function NotebookCard({
   userId, 
   jobId, 
   getToken, 
-  notesCount: initialNotesCount = 0 
+  notesCount: initialNotesCount = 0,
+  sourceUrl = null 
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -205,29 +206,44 @@ export default function NotebookCard({
                 {displayTitle}
               </motion.h3>
                
-              <div className="flex flex-wrap items-center gap-2 mb-3">
-                <div className="flex items-center gap-1.5 text-xs text-gray-400 bg-white/5 px-2 py-1 rounded-lg">
-                  <Mic className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>{voice}</span>
-                </div>
-                 
-                <div 
-                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-gradient-to-r ${getStatusColor()} shadow-lg ${getStatusGlow()}`}
-                  role="status"
-                  aria-label={`Status: ${status}`}
-                >
-                  {getStatusIcon()}
-                  <span className="font-medium capitalize">{status}</span>
-                  {status === 'processing' && (
-                    <motion.div
-                      animate={{ opacity: [0.5, 1, 0.5] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                      className="w-1.5 h-1.5 bg-white rounded-full ml-1"
-                      aria-hidden="true"
-                    />
-                  )}
-                </div>
-              </div>
+               <div className="flex flex-wrap items-center gap-2 mb-3">
+                 <div className="flex items-center gap-1.5 text-xs text-gray-400 bg-white/5 px-2 py-1 rounded-lg">
+                   <Mic className="w-3.5 h-3.5" aria-hidden="true" />
+                   <span>{voice}</span>
+                 </div>
+                  
+                 {sourceUrl && (
+                   <div className="flex items-center gap-1.5 text-xs text-gray-400 bg-blue-500/10 px-2 py-1 rounded-lg max-w-[200px]">
+                     <Globe className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" aria-hidden="true" />
+                     <span className="truncate" title={sourceUrl}>
+                       {(() => {
+                         try {
+                           return new URL(sourceUrl).hostname.replace('www.', '');
+                         } catch {
+                           return sourceUrl.substring(0, 30) + (sourceUrl.length > 30 ? '...' : '');
+                         }
+                       })()}
+                     </span>
+                   </div>
+                 )}
+                  
+                 <div 
+                   className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-gradient-to-r ${getStatusColor()} shadow-lg ${getStatusGlow()}`}
+                   role="status"
+                   aria-label={`Status: ${status}`}
+                 >
+                   {getStatusIcon()}
+                   <span className="font-medium capitalize">{status}</span>
+                   {status === 'processing' && (
+                     <motion.div
+                       animate={{ opacity: [0.5, 1, 0.5] }}
+                       transition={{ duration: 1.5, repeat: Infinity }}
+                       className="w-1.5 h-1.5 bg-white rounded-full ml-1"
+                       aria-hidden="true"
+                     />
+                   )}
+                 </div>
+               </div>
                
               {/* Notes Badge */}
               <motion.div 

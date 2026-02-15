@@ -8,13 +8,16 @@
 --Stable release:
 11. Ads
 12. terms and conditions (if user tries to delete and upload to avoid upload limit)
-13. webpages support.
 14. typing text support.
 15. ocr support.
 16. user notification via email for subscription activated (either via razorpay or manually)
 18. different price different country
 19. frontend improvement with sdks.
+demo notebooks.
 
+------------------------------completed/not tested----------------------------------------------
+13. webpages support.
+14. sse endpoints.
 
 ------------------------------completed------------------------------------------------------------
 19. token consumption db, ui status, and backend check
