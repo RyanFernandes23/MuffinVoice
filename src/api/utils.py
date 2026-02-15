@@ -82,6 +82,7 @@ def get_unique_notebook_title(
 def set_job_status(job_id: str, status: str, extra: Optional[dict] = None):
     """
     Updates BOTH Redis (for speed/real-time) and SQL (for persistence).
+    Also publishes to SSE clients for real-time updates.
     """
     # 1. Update Redis
     data = {"status": status}
@@ -93,6 +94,14 @@ def set_job_status(job_id: str, status: str, extra: Optional[dict] = None):
     # 2. Sync to SQL
     update_db_status(job_id, status)
     logger.info(f"Job {job_id} status updated to {status}")
+
+    # 3. Publish to SSE clients (async - don't block)
+    try:
+        user_id = get_user_id_for_job(job_id)
+        if user_id:
+            publish_notebook_status(user_id, job_id, status)
+    except Exception as e:
+        logger.warning(f"Failed to publish notebook status for {job_id}: {e}")
 
 
 def get_job_status(job_id: str):
@@ -109,6 +118,40 @@ def create_db_and_tables():
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def get_user_id_for_job(job_id: str) -> Optional[str]:
+    """Get the user_id for a given job_id from the database."""
+    try:
+        with Session(engine) as session:
+            statement = select(Notebook).where(Notebook.job_id == job_id)
+            notebook = session.exec(statement).first()
+            return notebook.user_id if notebook else None
+    except Exception as e:
+        logger.error(f"Failed to get user_id for job {job_id}: {e}")
+        return None
+
+
+def publish_notebook_status(user_id: str, job_id: str, status: str):
+    """
+    Publish notebook status update to Redis pub/sub for SSE clients.
+    Called whenever job status changes to notify frontend of updates.
+    """
+    try:
+        channel = f"notebook_status:{user_id}"
+        message = json.dumps(
+            {
+                "job_id": job_id,
+                "status": status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        redis_client.publish(channel, message)
+        logger.info(f"[NOTEBOOK-STATUS] Published {job_id}={status} for user {user_id}")
+    except Exception as e:
+        logger.error(
+            f"[NOTEBOOK-STATUS] Failed to publish status for job {job_id}: {e}"
+        )
 
 
 def update_db_status(job_id: str, status: str):

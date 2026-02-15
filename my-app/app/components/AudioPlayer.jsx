@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import NotesModal from './NotesModal';
 import NotesList from './NotesList';
+import { useVoiceStatus } from '../hooks/useVoiceStatus';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
@@ -44,8 +45,6 @@ export default function AudioPlayer({
   
   const [showVoiceOptions, setShowVoiceOptions] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_bella');
-  const [voices, setVoices] = useState([]);
-  const [loadingVoices, setLoadingVoices] = useState(false);
   const [processingVoice, setProcessingVoice] = useState(null);
 
   const [showModal, setShowModal] = useState(false); // For general info/error messages
@@ -107,42 +106,13 @@ export default function AudioPlayer({
     }
   }, [showVoiceOptions]);
 
-  // Fetch voice status from backend - only when options pane is open
-  useEffect(() => {
-    if (!userId || !jobId || !getToken || !showVoiceOptions) return;
-
-    const fetchVoiceStatus = async () => {
-      setLoadingVoices(true);
-      try {
-        const token = await getToken();
-        const response = await fetch(`${API_BASE_URL}/api/check_voice_status/${userId}/${jobId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          const mappedVoices = data.voices.map(voice => ({
-            id: voice.name,
-            name: formatVoiceName(voice.name),
-            status: voice.status,
-          }));
-          setVoices(mappedVoices);
-          if (mappedVoices.length > 0 && !selectedVoice) {
-            setSelectedVoice(mappedVoices[0].id);
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching voice status:', error);
-      } finally {
-        setLoadingVoices(false);
-      }
-    };
-
-    fetchVoiceStatus();
-    const interval = setInterval(fetchVoiceStatus, 5000); // Refresh every 5 seconds only while pane is open
-    return () => clearInterval(interval);
-  }, [userId, jobId, getToken, showVoiceOptions]);
+  // Use SSE with polling fallback for voice status
+  const { voices, loadingVoices, connectionStatus } = useVoiceStatus(
+    userId,
+    jobId,
+    getToken,
+    showVoiceOptions // Only connect when voice options pane is open
+  );
 
   useEffect(() => {
     if (seekTime !== null && audioRef.current && !isSeeking) {
@@ -490,11 +460,7 @@ export default function AudioPlayer({
           setModalType('success');
           setModalMessage('✓ Processing started for this voice. Please wait while it\'s being processed!');
           setShowModal(true);
-          setVoices(prevVoices => 
-            prevVoices.map(voice => 
-              voice.id === voiceId ? { ...voice, status: 'processing' } : voice
-            )
-          );
+          // Status will update automatically via SSE/polling hook
         } else {
           const error = await response.json();
           console.error(`Error processing voice: ${error.detail}`);
@@ -529,16 +495,7 @@ export default function AudioPlayer({
     }
   };
 
-  const formatVoiceName = (voiceName) => {
-    const parts = voiceName.split('_');
-    if (parts.length === 2) {
-      const code = parts[0];
-      const name = parts[1];
-      const gender = (code.startsWith('af') || code.startsWith('bf')) ? 'Female' : (code.startsWith('am') || code.startsWith('bm') || code.startsWith('em')) ? 'Male' : 'Unknown';
-      return `${name.charAt(0).toUpperCase() + name.slice(1)} (${gender})`;
-    }
-    return voiceName.charAt(0).toUpperCase() + voiceName.slice(1);
-  };
+
 
   const handleMuteToggle = () => {
     if (audioRef.current) {
@@ -741,9 +698,21 @@ export default function AudioPlayer({
               exit={{ opacity: 0, y: 10 }}
               className="absolute bottom-full right-0 mb-2 glass-card border border-white/10 rounded-lg shadow-xl p-3 w-64 max-h-80 overflow-y-auto z-50 origin-bottom-right"
             >
-              <h3 className="text-white font-semibold mb-3 text-sm flex items-center gap-2">
-                <History size={16} /> Available Voices
-              </h3>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                  <History size={16} /> Available Voices
+                </h3>
+                {/* Connection status indicator */}
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  connectionStatus === 'sse'
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : connectionStatus === 'polling'
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'bg-gray-500/20 text-gray-400'
+                }`} title={connectionStatus === 'sse' ? 'Live updates' : connectionStatus === 'polling' ? 'Polling mode' : 'Disconnected'}>
+                  {connectionStatus === 'sse' ? '● Live' : connectionStatus === 'polling' ? '○ Polling' : '○ Offline'}
+                </span>
+              </div>
               <div className="space-y-2">
                 {loadingVoices ? (
                   <div className="flex items-center justify-center py-4 text-gray-400">

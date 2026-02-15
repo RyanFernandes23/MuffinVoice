@@ -1,7 +1,9 @@
 # src/api/routers/notebooks.py
+import asyncio
+import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
 
 from fastapi import (
@@ -14,6 +16,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, desc, select
 from werkzeug.utils import secure_filename
 
@@ -29,6 +32,7 @@ from src.api.utils import (
     calculate_text_tokens,
     check_token_availability,
     deduct_tokens,
+    engine,
     get_job_status,
     get_session,
     get_unique_notebook_title,
@@ -509,3 +513,297 @@ async def process_voice(
     except Exception as e:
         logger.error(f"Error processing voice {voice} for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Error starting voice processing")
+
+
+async def get_all_voices_status(user_id: str, job_id: str) -> dict:
+    """
+    Helper function to get current status of all voices for a job.
+    Returns a dict with voices list and job_status.
+    """
+    try:
+        job_data = get_job_status(job_id)
+        if not job_data:
+            return {"job_id": job_id, "job_status": "unknown", "voices": []}
+
+        job_status = (
+            job_data.get(b"status", b"unknown").decode("utf-8")
+            if isinstance(job_data, dict)
+            else "unknown"
+        )
+        s3_voices_prefix = f"{user_id}/{job_id}/voices/"
+
+        s3 = get_s3_client()
+        response = s3.list_objects_v2(
+            Bucket="ttsfiles", Prefix=s3_voices_prefix, Delimiter="/"
+        )
+
+        existing_voices = set()
+        if "CommonPrefixes" in response:
+            for prefix in response["CommonPrefixes"]:
+                voice_name = prefix["Prefix"].rstrip("/").split("/")[-1]
+                existing_voices.add(voice_name)
+
+        voices_status = []
+        for voice in AVAILABLE_VOICES:
+            if voice in existing_voices:
+                voice_prefix = f"{s3_voices_prefix}{voice}/"
+                manifest_key = f"{voice_prefix}manifest.m3u8"
+
+                try:
+                    s3.head_object(Bucket="ttsfiles", Key=manifest_key)
+                    status = "ready"
+                except s3.exceptions.ClientError as e:
+                    if e.response["Error"]["Code"] == "404":
+                        status = "processing"
+                    else:
+                        status = "processing"
+            else:
+                status = "not started"
+
+            voices_status.append({"name": voice, "status": status})
+
+        return {"job_id": job_id, "job_status": job_status, "voices": voices_status}
+    except Exception as e:
+        logger.error(f"Error getting voice status for job {job_id}: {e}")
+        return {"job_id": job_id, "job_status": "error", "voices": []}
+
+
+@notebooks_router.get("/voice_status_stream/{user_id}/{job_id}")
+async def voice_status_stream(
+    user_id: str, job_id: str, token_payload=Depends(clerk_auth)
+):
+    """
+    SSE endpoint for real-time voice status updates.
+    Streams voice status changes as they happen via Redis pub/sub.
+    Includes automatic fallback support header for clients.
+    """
+    if token_payload.decoded.get("sub") != user_id:
+        logger.warning(
+            f"Unauthorized SSE attempt: {token_payload.decoded.get('sub')} tried to access {user_id}"
+        )
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to view this stream."
+        )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE events with voice status updates."""
+        pubsub = None
+        try:
+            # Create pub/sub connection
+            pubsub = redis_client.pubsub()
+            channel = f"voice_status:{job_id}"
+            pubsub.subscribe(channel)
+
+            # Send initial status immediately
+            initial_status = await get_all_voices_status(user_id, job_id)
+            yield f"data: {json.dumps(initial_status)}\n\n"
+
+            # Listen for updates with timeout
+            while True:
+                try:
+                    # Wait for message with 30 second timeout (heartbeat)
+                    message = await asyncio.wait_for(
+                        asyncio.to_thread(pubsub.get_message, timeout=1.0), timeout=30.0
+                    )
+
+                    if message and message["type"] == "message":
+                        # Parse the voice status update
+                        try:
+                            update_data = json.loads(message["data"])
+                            # Get fresh full status after update
+                            full_status = await get_all_voices_status(user_id, job_id)
+                            yield f"data: {json.dumps(full_status)}\n\n"
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                f"Invalid JSON in voice status message: {message['data']}"
+                            )
+
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield ":heartbeat\n\n"
+
+        except asyncio.CancelledError:
+            logger.info(f"SSE connection cancelled for job {job_id}")
+            raise
+        except Exception as e:
+            logger.error(f"SSE error for job {job_id}: {e}")
+            # Send error event before closing
+            error_data = {"error": "Stream error", "message": str(e)}
+            yield f"data: {json.dumps(error_data)}\n\n"
+        finally:
+            if pubsub:
+                pubsub.unsubscribe()
+                pubsub.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable Nginx buffering
+        },
+    )
+
+
+async def get_active_notebooks(user_id: str) -> list:
+    """
+    Get all active (queued/processing) notebooks for a user.
+    """
+    with Session(engine) as session:
+        statement = (
+            select(Notebook)
+            .where(
+                Notebook.user_id == user_id,
+                Notebook.status.in_(["queued", "processing"]),
+            )
+            .order_by(desc(Notebook.created_at))
+        )
+        notebooks = session.exec(statement).all()
+        return [
+            {
+                "job_id": nb.job_id,
+                "title": nb.title,
+                "voice": nb.voice,
+                "status": nb.status,
+                "created_at": nb.created_at.isoformat() if nb.created_at else None,
+                "tokens_used": nb.tokens_used,
+            }
+            for nb in notebooks
+        ]
+
+
+@notebooks_router.get("/notebook_status_stream/{user_id}")
+async def notebook_status_stream(user_id: str, token_payload=Depends(clerk_auth)):
+    """
+    SSE endpoint for real-time notebook status updates.
+    Streams only active notebooks (queued/processing).
+    Sends 'all_complete' event and closes when no active notebooks remain.
+    """
+    if token_payload.decoded.get("sub") != user_id:
+        logger.warning(
+            f"Unauthorized SSE attempt: {token_payload.decoded.get('sub')} tried to access {user_id}"
+        )
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to view this stream."
+        )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE events with notebook status updates."""
+        pubsub = None
+        try:
+            # Create pub/sub connection
+            pubsub = redis_client.pubsub()
+            channel = f"notebook_status:{user_id}"
+            pubsub.subscribe(channel)
+
+            # Get initial active notebooks
+            active_notebooks = await get_active_notebooks(user_id)
+
+            # If no active notebooks initially, send all_complete and close
+            if not active_notebooks:
+                yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
+                return
+
+            # Send initial data
+            yield f"data: {json.dumps({'type': 'active_notebooks', 'notebooks': active_notebooks})}\n\n"
+
+            # Track active job IDs
+            active_job_ids = {nb["job_id"] for nb in active_notebooks}
+            consecutive_empty_polls = 0
+            max_empty_polls = 2  # Check twice before closing
+
+            # Listen for updates
+            while True:
+                try:
+                    # Wait for message with 30 second timeout (heartbeat)
+                    message = await asyncio.wait_for(
+                        asyncio.to_thread(pubsub.get_message, timeout=1.0), timeout=30.0
+                    )
+
+                    if message and message["type"] == "message":
+                        # A status update was published, refresh active list
+                        active_notebooks = await get_active_notebooks(user_id)
+
+                        # Update tracking
+                        new_active_ids = {nb["job_id"] for nb in active_notebooks}
+
+                        # Check if any jobs transitioned from active to complete/failed
+                        completed_jobs = active_job_ids - new_active_ids
+
+                        if completed_jobs:
+                            # Send update with the completed job info
+                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
+
+                            # Update tracking set
+                            active_job_ids = new_active_ids
+
+                            # Check if all complete
+                            if not active_job_ids:
+                                consecutive_empty_polls += 1
+                                if consecutive_empty_polls >= max_empty_polls:
+                                    # Verify once more before closing
+                                    final_check = await get_active_notebooks(user_id)
+                                    if not final_check:
+                                        yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
+                                        break
+                                    else:
+                                        # Race condition - new active jobs appeared
+                                        active_job_ids = {
+                                            nb["job_id"] for nb in final_check
+                                        }
+                                        consecutive_empty_polls = 0
+                                else:
+                                    # First empty poll, wait for next message to confirm
+                                    pass
+                            else:
+                                consecutive_empty_polls = 0
+                        else:
+                            # No change in active set, but send update anyway (could be new queued job)
+                            if new_active_ids - active_job_ids:
+                                # New jobs added
+                                active_job_ids = new_active_ids
+                                yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
+                                consecutive_empty_polls = 0
+
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield ":heartbeat\n\n"
+
+                    # Periodic check - query database to catch any missed updates
+                    active_notebooks = await get_active_notebooks(user_id)
+
+                    new_active_ids = {nb["job_id"] for nb in active_notebooks}
+
+                    # If status changed, send update
+                    if new_active_ids != active_job_ids:
+                        active_job_ids = new_active_ids
+                        if active_job_ids:
+                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
+                        else:
+                            consecutive_empty_polls += 1
+                            if consecutive_empty_polls >= max_empty_polls:
+                                yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
+                                break
+
+        except asyncio.CancelledError:
+            logger.info(f"Notebook SSE connection cancelled for user {user_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Notebook SSE error for user {user_id}: {e}")
+            error_data = {"type": "error", "error": "Stream error", "message": str(e)}
+            yield f"data: {json.dumps(error_data)}\n\n"
+        finally:
+            if pubsub:
+                pubsub.unsubscribe()
+                pubsub.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

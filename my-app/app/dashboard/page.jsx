@@ -16,71 +16,26 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
+import { useNotebookStatus } from '../hooks/useNotebookStatus';
 
 
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
 
-  const [notebooks, setNotebooks] = useState([]);
-
-  const fetchNotebooks = useCallback(async () => {
-    if (!userId || !getToken) return;
-    try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/notebooks`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setNotebooks(data);
-      } else {
-        console.error('Failed to fetch notebooks:', response.status);
-        toast.error('Failed to load notebooks.');
-      }
-    } catch (error) {
-      console.error('Error fetching notebooks:', error);
-      toast.error('Error loading notebooks.');
-    }
-  }, [userId, getToken]);
-
-  const updateNotebookStatus = useCallback(async (nbOrJobId) => {
-    if (!userId || !getToken) return [];
-
-    let updatedNotebooks = [...notebooks];
-
-    if (typeof nbOrJobId === 'function') { // Called from handleNotesUpdate for a specific notebook
-      updatedNotebooks = updatedNotebooks.map(nbOrJobId);
-    } else { // Polling scenario
-      try {
-        const token = await getToken();
-        const response = await fetch(`${API_BASE_URL}/api/notebooks`, { // Re-fetch all for simplicity
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          updatedNotebooks = await response.json();
-        } else {
-          console.error('Failed to update notebook status:', response.status);
-        }
-      } catch (error) {
-        console.error('Error updating notebook status:', error);
-      }
-    }
-    setNotebooks(updatedNotebooks);
-    return updatedNotebooks; // Return updated list for the poll function
-  }, [userId, getToken, notebooks]);
+  // Use SSE with polling fallback for notebook status
+  const { 
+    notebooks, 
+    activeNotebooks, 
+    loading, 
+    connectionStatus, 
+    refresh 
+  } = useNotebookStatus(userId, getToken);
 
 
   const deleteNotebookOptimistic = useCallback(async (jobId) => {
     if (!userId || !getToken) return false;
     try {
       const token = await getToken();
-      // Optimistically update UI
-      setNotebooks(prev => prev.filter(nb => nb.job_id !== jobId));
-
       const response = await fetch(`${API_BASE_URL}/api/notebooks/${jobId}`, {
         method: 'DELETE',
         headers: {
@@ -89,18 +44,19 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        // If delete fails, re-fetch to revert optimistic update
-        fetchNotebooks();
         throw new Error('Failed to delete notebook');
       }
+      
+      // Refresh to get updated list
+      refresh();
       return true;
     } catch (error) {
       console.error('Error deleting notebook:', error);
       toast.error('Error deleting notebook.');
-      fetchNotebooks(); // Revert on error
+      refresh(); // Refresh to revert on error
       return false;
     }
-  }, [userId, getToken, fetchNotebooks]);
+  }, [userId, getToken, refresh]);
 
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -115,15 +71,6 @@ export default function DashboardPage() {
   const [seekTime, setSeekTime] = useState(null);
 
   const prevCompletedCount = useRef(0);
-
-  /* ----------------------------------------------
-     Fetch Notebooks on Mount
-  ------------------------------------------------*/
-  useEffect(() => {
-    if (isSignedIn) fetchNotebooks();
-  }, [isSignedIn, fetchNotebooks]);
-
-
 
   /* ----------------------------------------------
      Subtitle Overlay Body Scroll Handling
@@ -156,7 +103,7 @@ export default function DashboardPage() {
   };
 
   const handleUploadComplete = async () => {
-    await fetchNotebooks();
+    await refresh();
   };
 
   /* ----------------------------------------------
@@ -213,14 +160,9 @@ export default function DashboardPage() {
      Notes Update from Player
   ------------------------------------------------*/
   const handleNotesUpdate = (count) => {
-    if (!currentNotebook) return;
-
-    const jobId = currentNotebook.job_id;
-
-    // Update only the notebook being viewed
-    updateNotebookStatus(nb =>
-      nb.job_id === jobId ? { ...nb, notesCount: count } : nb
-    );
+    // Notes are managed by NotebookCard component internally
+    // This callback is for any additional side effects if needed
+    console.log(`Notes updated for ${currentNotebook?.job_id}: ${count} notes`);
   };
 
   const getCurrentSubtitle = () => {
@@ -282,16 +224,50 @@ export default function DashboardPage() {
           transition={{ duration: 0.8, delay: 0.4 }}
           className="container mx-auto px-4 md:px-6 py-8"
         >
-          <motion.h2 
+          <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3"
+            className="flex justify-between items-center mb-6"
           >
-            <Sparkles className="w-6 h-6 text-accent-glow" />
-            Your Notebooks
-          </motion.h2>
+            <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+              <Sparkles className="w-6 h-6 text-accent-glow" />
+              Your Notebooks
+            </h2>
+            
+            {/* Connection status indicator */}
+            {notebooks.length > 0 && (
+              <span className={`text-xs px-3 py-1 rounded-full flex items-center gap-1.5 ${
+                connectionStatus === 'sse'
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  : connectionStatus === 'polling'
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+              }`}>
+                {connectionStatus === 'sse' && <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />}
+                {connectionStatus === 'polling' && <span className="w-2 h-2 bg-amber-400 rounded-full" />}
+                {connectionStatus === 'disconnected' && <span className="w-2 h-2 bg-gray-400 rounded-full" />}
+                <span className="font-medium">
+                  {connectionStatus === 'sse' ? 'Live Updates' : connectionStatus === 'polling' ? 'Polling' : 'Offline'}
+                </span>
+              </span>
+            )}
+          </motion.div>
           
-          {notebooks.length === 0 ? (
+          {loading ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="glass-card rounded-3xl p-12 text-center max-w-2xl mx-auto"
+            >
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 mb-6">
+                <div className="w-10 h-10 border-4 border-primary-glow/30 border-t-primary-glow rounded-full animate-spin" />
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-3">Loading your notebooks...</h3>
+              <p className="text-gray-400">
+                {connectionStatus === 'sse' ? 'Connecting for live updates...' : 'Fetching your audiobooks...'}
+              </p>
+            </motion.div>
+          ) : notebooks.length === 0 ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

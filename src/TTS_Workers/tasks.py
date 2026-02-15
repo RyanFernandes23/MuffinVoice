@@ -26,6 +26,28 @@ from src.utils.RedisClient import redis_client
 
 load_dotenv()
 
+
+# --- Voice Status Pub/Sub ---
+def publish_voice_status(job_id: str, voice: str, status: str):
+    """
+    Publish voice status update to Redis pub/sub for SSE clients.
+    Called by TTS workers to notify frontend of status changes.
+    """
+    try:
+        channel = f"voice_status:{job_id}"
+        message = json.dumps(
+            {
+                "voice": voice,
+                "status": status,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+        redis_client.publish(channel, message)
+        logging.info(f"[VOICE-STATUS] Published {voice}={status} for job {job_id}")
+    except Exception as e:
+        logging.error(f"[VOICE-STATUS] Failed to publish status for job {job_id}: {e}")
+
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -103,6 +125,16 @@ def update_job_status(job_id, status):
     if status in ["completed", "failed"]:
         update_db_status(job_id, status)
 
+    # 3. Publish to SSE clients
+    try:
+        from src.api.utils import get_user_id_for_job, publish_notebook_status
+
+        user_id = get_user_id_for_job(job_id)
+        if user_id:
+            publish_notebook_status(user_id, job_id, status)
+    except Exception as e:
+        logging.warning(f"Failed to publish notebook status for {job_id}: {e}")
+
 
 def update_job_status_with_tokens(job_id, status, total_tokens):
     """Update job status with token tracking for completed jobs."""
@@ -119,6 +151,16 @@ def update_job_status_with_tokens(job_id, status, total_tokens):
         update_db_status(job_id, status, total_tokens)
     else:
         update_db_status(job_id, status)
+
+    # 3. Publish to SSE clients
+    try:
+        from src.api.utils import get_user_id_for_job, publish_notebook_status
+
+        user_id = get_user_id_for_job(job_id)
+        if user_id:
+            publish_notebook_status(user_id, job_id, status)
+    except Exception as e:
+        logging.warning(f"Failed to publish notebook status for {job_id}: {e}")
 
 
 @dramatiq.actor
@@ -160,6 +202,10 @@ def process_speeches(user_id, job_id, voice):
 
     try:
         logging.info(f"Starting process_speeches for job {job_id}")
+
+        # Publish that voice processing has started
+        publish_voice_status(job_id, voice, "processing")
+
         response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
         chunks = json.loads(response["Body"].read().decode("utf-8"))
 
@@ -382,6 +428,9 @@ def finalize_manifest(user_id, job_id, voice):
 
         # Pass total tokens to update_job_status
         update_job_status_with_tokens(job_id, "completed", total_tokens_used)
+
+        # Publish voice completion status for SSE clients
+        publish_voice_status(job_id, voice, "ready")
 
         # Cleanup
         s3.delete_object(Bucket=bucket, Key=manifest_data_key)
