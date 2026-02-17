@@ -314,3 +314,39 @@ body::before {
   transform: scale(1.2);
   box-shadow: 0 0 15px var(--primary-glow), 0 0 30px rgba(59, 130, 246, 0.5);
 }
+
+/* ── Quick Editor styles ── */
+.editor-container {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.editor-container textarea {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(59, 130, 246, 0.3) transparent;
+}
+
+.editor-container textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.editor-container textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.editor-container textarea::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.2);
+  border-radius: 3px;
+}
+
+.editor-container textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.4);
+}
+
+.line-numbers-gutter {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.line-numbers-gutter::-webkit-scrollbar {
+  display: none;
+}

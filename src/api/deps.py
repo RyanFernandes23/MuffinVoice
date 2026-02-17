@@ -6,15 +6,15 @@ from fastapi import Depends, HTTPException
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer
 from sqlmodel import Session, select
 
-from src.api.schema import Notebook
-from src.api.utils import get_session
+from .schema import Notebook
+from .utils import get_session
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+MAX_FILE_SIZE = 150 * 1024 * 1024  # 150 MB
 
 AVAILABLE_VOICES: List[str] = [
     "af_bella",

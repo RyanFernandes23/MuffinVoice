@@ -196,6 +196,14 @@ def get_user_tokens(user_id: str, session: Session) -> dict:
         if plan:
             plan_name = plan.name
 
+    # Map plan name to max file size limit in MB
+    plan_file_size_map = {
+        "explorer": 50,
+        "creator": 100,
+        "professional": 150
+    }
+    max_file_size_mb = plan_file_size_map.get(plan_name.lower(), 50)
+
     percent_used = 0
     if user.tokens_allocated > 0:
         percent_used = (user.monthly_tokens_used / user.tokens_allocated) * 100
@@ -206,4 +214,5 @@ def get_user_tokens(user_id: str, session: Session) -> dict:
         "used_this_month": user.monthly_tokens_used,
         "percent_used": round(percent_used, 2),
         "plan_name": plan_name,
+        "max_file_size_mb": max_file_size_mb,
     }

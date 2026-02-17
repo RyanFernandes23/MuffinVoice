@@ -5,17 +5,17 @@ import { X, AlertTriangle, Upload, ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 const planLimits = {
-  explorer: { name: "Explorer", fileSize: "50MB", upgradeSize: "150MB" },
-  creator: { name: "Creator", fileSize: "150MB", upgradeSize: "200MB" },
-  professional: { name: "Professional", fileSize: "200MB", upgradeSize: null },
+  explorer: { name: "Explorer", fileSize: "50MB", upgradeSize: "100MB" },
+  creator: { name: "Creator", fileSize: "100MB", upgradeSize: "150MB" },
+  professional: { name: "Professional", fileSize: "150MB", upgradeSize: null },
 };
 
-export function FileTooLargeModal({ 
-  isOpen, 
-  onClose, 
-  fileSize, 
+export function FileTooLargeModal({
+  isOpen,
+  onClose,
+  fileSize,
   currentPlan = "explorer",
-  onTryAnotherFile 
+  onTryAnotherFile
 }) {
   if (!isOpen) return null;
 
@@ -112,7 +112,7 @@ export function FileTooLargeModal({
                   </button>
                 </Link>
               )}
-              
+
               <button
                 onClick={() => {
                   onTryAnotherFile?.();
@@ -147,12 +147,12 @@ function parseFileSize(sizeStr) {
     MB: 1024 * 1024,
     GB: 1024 * 1024 * 1024,
   };
-  
+
   const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)$/i);
   if (!match) return 0;
-  
+
   const value = parseFloat(match[1]);
   const unit = match[2].toUpperCase();
-  
+
   return value * (units[unit] || 1);
 }

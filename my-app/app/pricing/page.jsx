@@ -23,7 +23,7 @@ const pricingPlans = [
       "40K tokens per month",
       "Basic voice options",
       "Email support",
-      "MP3 export"
+      "No audio download"
     ],
     cta: "Get Started Free",
     popular: false
@@ -34,17 +34,16 @@ const pricingPlans = [
     icon: Crown,
     price: "$5",
     period: "/month",
-    fileSize: "150MB",
+    fileSize: "100MB",
     tokens: "400K",
     color: "amber",
     description: "For content creators who need more power",
     features: [
-      "150MB max file upload",
+      "100MB max file upload",
       "400K tokens per month",
       "All voice options",
-      "Priority support",
-      "MP3 & WAV export",
-      "Batch processing"
+      "Audio download enabled",
+      "Priority support"
     ],
     cta: "Choose Plan",
     popular: true
@@ -55,18 +54,16 @@ const pricingPlans = [
     icon: Star,
     price: "$12",
     period: "/month",
-    fileSize: "200MB",
+    fileSize: "150MB",
     tokens: "1.6M",
     color: "purple",
     description: "For teams and power users",
     features: [
-      "200MB max file upload",
+      "150MB max file upload",
       "1.6M tokens per month",
       "All voices including AI",
-      "24/7 dedicated support",
-      "All export formats",
-      "API access",
-      "Team collaboration"
+      "Audio download enabled",
+      "24/7 dedicated support"
     ],
     cta: "Choose Plan",
     popular: false
@@ -126,7 +123,7 @@ function PricingCard({ plan, onSubscribe, isCurrentPlan }) {
           </span>
         </div>
       )}
-      
+
       {isCurrentPlan && (
         <div className="absolute -top-3 right-4">
           <span className="px-2 py-1 text-xs font-medium bg-white/20 text-white rounded border border-white/30">
@@ -194,8 +191,8 @@ function PricingCard({ plan, onSubscribe, isCurrentPlan }) {
         className={`
           w-full py-2.5 rounded-lg font-medium text-white
           transition-all duration-200
-          ${isCurrentPlan 
-            ? 'bg-white/10 text-gray-400 cursor-not-allowed' 
+          ${isCurrentPlan
+            ? 'bg-white/10 text-gray-400 cursor-not-allowed'
             : colors.button
           }
         `}
@@ -226,7 +223,7 @@ export default function PricingPage() {
           Authorization: `Bearer ${token}`,
         },
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -254,13 +251,13 @@ export default function PricingPage() {
 
       const response = await fetch('/api/payment/create-subscription', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ 
-            plan_name: planName.toLowerCase(),
-        }) 
+        body: JSON.stringify({
+          plan_name: planName.toLowerCase(),
+        })
       });
 
       if (!response.ok) {
@@ -283,7 +280,7 @@ export default function PricingPage() {
           toast.success('Payment successful! Your subscription is being activated.', { id: loadingToastId });
         },
         modal: {
-          ondismiss: function() {
+          ondismiss: function () {
             toast.dismiss(loadingToastId);
             toast.error('Payment process cancelled.');
           }
@@ -312,14 +309,14 @@ export default function PricingPage() {
       <div className="pt-20 pb-8 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-6 md:mb-8">
-            <motion.h1 
+            <motion.h1
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               className="text-3xl sm:text-4xl font-bold text-foreground mb-2"
             >
               Simple, <span className="text-gradient">Transparent</span> Pricing
             </motion.h1>
-            <motion.p 
+            <motion.p
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
@@ -328,7 +325,7 @@ export default function PricingPage() {
               Choose the perfect plan for your needs
             </motion.p>
           </div>
-          
+
           {/* Pricing Cards - Horizontal scroll on mobile, grid on desktop */}
           <div className="flex md:grid md:grid-cols-3 gap-6 overflow-x-auto md:overflow-visible snap-x snap-mandatory pb-24 md:pb-8 -mx-4 px-4 md:mx-0 md:px-0 h-auto items-stretch">
             {pricingPlans.map((plan, index) => (
@@ -339,16 +336,16 @@ export default function PricingPage() {
                 transition={{ delay: index * 0.1 }}
                 className="snap-center"
               >
-                <PricingCard 
-                  plan={plan} 
+                <PricingCard
+                  plan={plan}
                   onSubscribe={handleSubscribe}
                   isCurrentPlan={currentPlan === plan.id}
                 />
               </motion.div>
             ))}
           </div>
-          
-          <motion.div 
+
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.4 }}
