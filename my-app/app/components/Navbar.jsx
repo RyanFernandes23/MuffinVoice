@@ -4,10 +4,45 @@ import Link from 'next/link';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Sparkles, Tag, LayoutDashboard, Menu, X, User } from 'lucide-react';
+import { Sparkles, Tag, LayoutDashboard, Menu, X, User, Zap, Crown } from 'lucide-react';
 import { UpgradeModal } from './modals/UpgradeModal';
 import { useUsage } from '../../hooks/useUsage';
 
+// Plan badge styling helper
+function getPlanBadgeStyle(planName) {
+  const plan = (planName || 'explorer').toLowerCase();
+  if (plan.includes('professional') || plan.includes('pro')) {
+    return {
+      bg: 'bg-purple-500/20',
+      border: 'border-purple-500/40',
+      text: 'text-purple-300',
+      icon: Crown
+    };
+  }
+  if (plan.includes('creator')) {
+    return {
+      bg: 'bg-amber-500/20',
+      border: 'border-amber-500/40',
+      text: 'text-amber-300',
+      icon: Zap
+    };
+  }
+  return {
+    bg: 'bg-gray-500/20',
+    border: 'border-gray-500/40',
+    text: 'text-gray-300',
+    icon: null
+  };
+}
+
+// Skeleton for plan badge
+function PlanBadgeSkeleton() {
+  return (
+    <div className="relative overflow-hidden bg-white/5 rounded-full h-6 w-24">
+      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+    </div>
+  );
+}
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -17,6 +52,8 @@ export default function Navbar() {
 
   // Don't show usage info until loaded
   const showUsage = !loading && usage.plan_name !== null;
+  const planBadge = getPlanBadgeStyle(usage.plan_name);
+  const PlanIcon = planBadge.icon;
 
 
   return (
@@ -72,7 +109,22 @@ export default function Navbar() {
           </Link>
 
           <SignedIn>
-            <div className="flex items-center gap-2 ml-2 pl-3 border-l border-white/10">
+            <div className="flex items-center gap-3 ml-2 pl-3 border-l border-white/10">
+              {/* Plan Badge Widget */}
+              {!showUsage ? (
+                <PlanBadgeSkeleton />
+              ) : (
+                <Link href="/pricing" className="group">
+                  <motion.span 
+                    whileHover={{ scale: 1.05 }}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-full border ${planBadge.bg} ${planBadge.border} ${planBadge.text} flex items-center gap-1.5 transition-all duration-300 group-hover:shadow-lg`}
+                  >
+                    {PlanIcon && <PlanIcon className="w-3.5 h-3.5" />}
+                    <span className="capitalize">{usage.plan_name || 'Explorer'}</span>
+                  </motion.span>
+                </Link>
+              )}
+              
               <Link
                 href="/profile"
                 className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
@@ -164,6 +216,21 @@ export default function Navbar() {
 
               <SignedIn>
                 <div className="pt-2 border-t border-white/10 space-y-3">
+                  {/* Plan Badge for Mobile */}
+                  {!showUsage ? (
+                    <div className="px-4 py-2">
+                      <PlanBadgeSkeleton />
+                    </div>
+                  ) : (
+                    <Link
+                      href="/pricing"
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
+                      onClick={() => setIsMobileMenuOpen(false)}
+                    >
+                      {PlanIcon && <PlanIcon className={`w-5 h-5 ${planBadge.text}`} />}
+                      <span className="capitalize">{usage.plan_name || 'Explorer'} Plan</span>
+                    </Link>
+                  )}
                   <Link
                     href="/profile"
                     className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"

@@ -18,11 +18,11 @@ export default function RootLayout({ children }) {
             strategy="beforeInteractive"
           />
         </head>
-        <body className="flex flex-col h-screen relative overflow-hidden">
+        <body className="flex flex-col min-h-screen relative">
           <AnimatedBackground />
-          <div className="relative z-10">
+          <div className="relative z-10 flex flex-col min-h-screen">
             <Navbar />
-            <main className="grow">
+            <main className="flex-1 overflow-y-auto">
               <Toaster
                 position="bottom-right"
                 toastOptions={{

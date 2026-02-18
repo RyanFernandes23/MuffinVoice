@@ -144,29 +144,48 @@ body::before {
 
 /* Fire fly glow animations */
 @keyframes firefly-pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 10px var(--firefly-glow), 0 0 20px var(--firefly-glow), 0 0 30px transparent;
     opacity: 0.8;
   }
+
   50% {
     box-shadow: 0 0 20px var(--firefly-glow), 0 0 40px var(--primary-glow), 0 0 60px var(--accent-glow);
     opacity: 1;
   }
 }
 
+/* Shimmer animation for skeleton loading */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 @keyframes firefly-float {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0) translateX(0);
     opacity: 0.8;
   }
+
   25% {
     transform: translateY(-15px) translateX(10px);
     opacity: 1;
   }
+
   50% {
     transform: translateY(-5px) translateX(-5px);
     opacity: 0.9;
   }
+
   75% {
     transform: translateY(-20px) translateX(5px);
     opacity: 1;
@@ -174,10 +193,13 @@ body::before {
 }
 
 @keyframes firefly-sparkle {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.3;
     transform: scale(0.8);
   }
+
   50% {
     opacity: 1;
     transform: scale(1.2);
@@ -185,9 +207,12 @@ body::before {
 }
 
 @keyframes gradient-shift {
-  0%, 100% {
+
+  0%,
+  100% {
     background-position: 0% 50%;
   }
+
   50% {
     background-position: 100% 50%;
   }
@@ -225,8 +250,15 @@ body::before {
 
 /* Floating animation */
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .animate-float {
@@ -235,9 +267,12 @@ body::before {
 
 /* Pulse animation */
 @keyframes pulse-glow {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
   }
+
   50% {
     box-shadow: 0 0 30px rgba(59, 130, 246, 0.8), 0 0 60px rgba(6, 182, 212, 0.3);
   }
