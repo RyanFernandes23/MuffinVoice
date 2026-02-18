@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Type, Mic, Loader2, X, Check, FileText, ChevronDown, ChevronUp, Zap, Crown, Maximize2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { useUsage } from '../../hooks/useUsage';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
@@ -31,15 +32,8 @@ export default function QuickTextInput({ onTextSubmit }) {
   const [draftStatus, setDraftStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const { getToken } = useAuth();
 
-  // Token / usage state
-  const [tokensLoaded, setTokensLoaded] = useState(false);
-  const [usageData, setUsageData] = useState({
-    remaining: 0,
-    allocated: 0,
-    used_this_month: 0,
-    percent_used: 0,
-    plan_name: 'explorer',
-  });
+  // Use shared usage hook with retry mechanism
+  const { usage: usageData, loading: usageLoading, refresh: refreshUsage } = useUsage(getToken);
 
   // Error state
   const [error, setError] = useState(null);
@@ -58,7 +52,7 @@ export default function QuickTextInput({ onTextSubmit }) {
 
   const tokensAfterText = usageData.remaining - stats.tokenCount;
   const exceedsTokens = stats.tokenCount > usageData.remaining;
-  const canSubmit = text.trim().length > 0 && !exceedsTokens && !isLoading && tokensLoaded;
+  const canSubmit = text.trim().length > 0 && !exceedsTokens && !isLoading && !usageLoading && usageData.plan_name !== null;
 
   // --- Line numbers ---
   const lineNumbers = useMemo(() => {
@@ -72,7 +66,6 @@ export default function QuickTextInput({ onTextSubmit }) {
     const savedTitle = localStorage.getItem(TITLE_STORAGE_KEY);
     if (savedDraft) setText(savedDraft);
     if (savedTitle) setTitle(savedTitle);
-    fetchUsageData();
   }, []);
 
   // --- Auto-save draft ---
@@ -102,33 +95,6 @@ export default function QuickTextInput({ onTextSubmit }) {
       lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
     }
   }, []);
-
-  // --- Fetch token usage ---
-  const fetchUsageData = async () => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/usage`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setUsageData({
-            remaining: data.data.remaining || 0,
-            allocated: data.data.allocated || 0,
-            used_this_month: data.data.used_this_month || 0,
-            percent_used: data.data.percent_used || 0,
-            plan_name: data.data.plan_name || 'explorer',
-          });
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching usage:', err);
-    } finally {
-      setTokensLoaded(true);
-    }
-  };
 
   // --- Submit handler ---
   const handleSubmit = useCallback(async () => {
@@ -163,8 +129,8 @@ export default function QuickTextInput({ onTextSubmit }) {
 
         toast.success('Text conversion started! Your notebook will appear shortly.');
 
-        // Refresh usage
-        fetchUsageData();
+        // Refresh usage using the shared hook
+        refreshUsage();
 
         // Notify parent
         if (onTextSubmit) {
@@ -189,7 +155,7 @@ export default function QuickTextInput({ onTextSubmit }) {
     } finally {
       setIsLoading(false);
     }
-  }, [canSubmit, text, title, selectedVoice, getToken, onTextSubmit]);
+  }, [canSubmit, text, title, selectedVoice, getToken, onTextSubmit, refreshUsage]);
 
   // --- Clear handler ---
   const handleClear = () => {
@@ -331,7 +297,7 @@ export default function QuickTextInput({ onTextSubmit }) {
                   </span>
                 </div>
                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden relative">
-                  {tokensLoaded ? (
+                  {!usageLoading && usageData.plan_name !== null ? (
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.min(usageData.percent_used, 100)}%` }}

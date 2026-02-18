@@ -82,12 +82,16 @@ class Customer(SQLModel, table=True):
 class Plan(SQLModel, table=True):
     plan_id: str = Field(primary_key=True, max_length=255)
     razorpay_plan_id: Optional[str] = Field(
-        default=None, max_length=255, unique=True, index=True
-    )  # Added field
-    name: str = Field(unique=True, max_length=255)
+        default=None, max_length=255, index=True
+    )  # Removed unique=True for test mode
+    name: str = Field(max_length=255)
     description: Optional[str] = Field(default=None)
     price: Decimal = Field(max_digits=10, decimal_places=2)
     currency: str = Field(max_length=3)
+    
+    __table_args__ = (
+        Index("ix_plan_name_currency", "name", "currency", unique=True),
+    )
     duration_days: int
     is_active: bool = Field(default=True)
     token_limit: int = Field(default=40000)

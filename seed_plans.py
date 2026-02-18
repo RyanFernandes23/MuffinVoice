@@ -31,8 +31,14 @@ load_dotenv()
 # Configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
 EXPLORER_PLAN_ID = os.getenv("RAZORPAY_EXPLORER_PLAN_ID", "")
-CREATOR_PLAN_ID = os.getenv("RAZORPAY_CREATOR_PLAN_ID", "")
-PROFESSIONAL_PLAN_ID = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID", "")
+
+# Creator Plan IDs
+CREATOR_PLAN_ID_INR = os.getenv("RAZORPAY_CREATOR_PLAN_ID_INR", "")
+CREATOR_PLAN_ID_USD = os.getenv("RAZORPAY_CREATOR_PLAN_ID_USD", "")
+
+# Professional Plan IDs
+PROFESSIONAL_PLAN_ID_INR = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID_INR", "")
+PROFESSIONAL_PLAN_ID_USD = os.getenv("RAZORPAY_PROFESSIONAL_PLAN_ID_USD", "")
 
 # Plan definitions
 PLANS = [
@@ -47,26 +53,50 @@ PLANS = [
         "razorpay_plan_id": EXPLORER_PLAN_ID,
         "token_limit": 40000,
     },
+    # Creator Plans
     {
-        "plan_id": "plan_creator",
+        "plan_id": "plan_creator_usd",
         "name": "creator",
-        "description": "400k tokens/month for $5. Audio download enabled. Max file size: 100MB. All voice options, priority support.",
+        "description": "400k tokens/month for $5. Audio download enabled. Max file size: 100MB.",
         "price": Decimal("5.00"),
         "currency": "USD",
         "duration_days": 30,
         "is_active": True,
-        "razorpay_plan_id": CREATOR_PLAN_ID,
+        "razorpay_plan_id": CREATOR_PLAN_ID_USD,
         "token_limit": 400000,
     },
     {
-        "plan_id": "plan_professional",
+        "plan_id": "plan_creator_inr",
+        "name": "creator",
+        "description": "400k tokens/month for ₹499. Audio download enabled. Max file size: 100MB.",
+        "price": Decimal("499.00"),
+        "currency": "INR",
+        "duration_days": 30,
+        "is_active": True,
+        "razorpay_plan_id": CREATOR_PLAN_ID_INR,
+        "token_limit": 400000,
+    },
+    # Professional Plans
+    {
+        "plan_id": "plan_professional_usd",
         "name": "professional",
-        "description": "1.6M tokens/month for $12. Audio download enabled. Max file size: 150MB. All voices including AI, 24/7 dedicated support, team collaboration.",
+        "description": "1.6M tokens/month for $12. Audio download enabled. Max file size: 150MB.",
         "price": Decimal("12.00"),
         "currency": "USD",
         "duration_days": 30,
         "is_active": True,
-        "razorpay_plan_id": PROFESSIONAL_PLAN_ID,
+        "razorpay_plan_id": PROFESSIONAL_PLAN_ID_USD,
+        "token_limit": 1600000,
+    },
+    {
+        "plan_id": "plan_professional_inr",
+        "name": "professional",
+        "description": "1.6M tokens/month for ₹1079. Audio download enabled. Max file size: 150MB.",
+        "price": Decimal("1079.00"),
+        "currency": "INR",
+        "duration_days": 30,
+        "is_active": True,
+        "razorpay_plan_id": PROFESSIONAL_PLAN_ID_INR,
         "token_limit": 1600000,
     },
 ]
@@ -81,6 +111,11 @@ def seed_plans():
 
     print("[INFO] Connecting to database...")
     engine = create_engine(DATABASE_URL, echo=False)
+
+    # Create tables if they don't exist (crucial for fresh volumes)
+    print("[INFO] Initializing database tables...")
+    from api.schema import SQLModel
+    SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
         print("[INFO] Seeding plans...")
@@ -140,24 +175,18 @@ def seed_plans():
     # Check if Razorpay plan IDs are set
     if not EXPLORER_PLAN_ID:
         print("\n[WARNING] RAZORPAY_EXPLORER_PLAN_ID not set")
-        print("   Add this to your .env file from your Razorpay Dashboard")
-    if not CREATOR_PLAN_ID:
-        print("\n[WARNING] RAZORPAY_CREATOR_PLAN_ID not set")
-        print("   Add this to your .env file from your Razorpay Dashboard")
-    if not PROFESSIONAL_PLAN_ID:
-        print("\n[WARNING] RAZORPAY_PROFESSIONAL_PLAN_ID not set")
-        print("   Add this to your .env file from your Razorpay Dashboard")
+    if not CREATOR_PLAN_ID_INR or not CREATOR_PLAN_ID_USD:
+        print("\n[WARNING] RAZORPAY_CREATOR_PLAN_ID_INR/USD not set")
+    if not PROFESSIONAL_PLAN_ID_INR or not PROFESSIONAL_PLAN_ID_USD:
+        print("\n[WARNING] RAZORPAY_PROFESSIONAL_PLAN_ID_INR/USD not set")
 
-    if not EXPLORER_PLAN_ID or not CREATOR_PLAN_ID or not PROFESSIONAL_PLAN_ID:
+    if not EXPLORER_PLAN_ID or not CREATOR_PLAN_ID_INR or not PROFESSIONAL_PLAN_ID_INR:
         print("\n[TIP] To get Razorpay Plan IDs:")
         print("   1. Go to Razorpay Dashboard -> Subscriptions -> Plans")
-        print(
-            "   2. Create plans for Explorer ($0), Creator ($5) and Professional ($12)"
-        )
+        print("   2. Create plans for Creator and Professional")
         print("   3. Copy the Plan IDs and add them to your .env file:")
-        print("      RAZORPAY_EXPLORER_PLAN_ID=plan_xxxxxx")
-        print("      RAZORPAY_CREATOR_PLAN_ID=plan_xxxxxx")
-        print("      RAZORPAY_PROFESSIONAL_PLAN_ID=plan_xxxxxx")
+        print("      RAZORPAY_CREATOR_PLAN_ID_INR=plan_xxxxxx")
+        print("      RAZORPAY_CREATOR_PLAN_ID_USD=plan_xxxxxx")
 
 
 def verify_seed_data(engine):

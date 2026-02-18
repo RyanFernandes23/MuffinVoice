@@ -4,17 +4,20 @@ import Link from 'next/link';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Sparkles, Tag, LayoutDashboard, Menu, X } from 'lucide-react';
-import { PlanWidget } from './widgets/PlanWidget';
-import { UsageWidget } from './widgets/UsageWidget';
+import { Sparkles, Tag, LayoutDashboard, Menu, X, User } from 'lucide-react';
 import { UpgradeModal } from './modals/UpgradeModal';
+import { useUsage } from '../../hooks/useUsage';
 
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-  const { getToken } = useAuth();
-  
+  const { getToken, isSignedIn } = useAuth();
+  const { usage, loading } = useUsage(isSignedIn ? getToken : null);
+
+  // Don't show usage info until loaded
+  const showUsage = !loading && usage.plan_name !== null;
+
 
   return (
     <nav className="glass fixed top-0 left-0 right-0 z-50 px-4 md:px-6 py-2 border-b border-white/10">
@@ -27,7 +30,7 @@ export default function Navbar() {
           className="flex items-center gap-2"
         >
           <motion.div
-            animate={{ 
+            animate={{
               scale: [1, 1.2, 1],
               rotate: [0, 5, -5, 0]
             }}
@@ -37,8 +40,8 @@ export default function Navbar() {
             <Sparkles className="w-5 h-5 text-primary-glow" />
             <div className="absolute inset-0 w-5 h-5 text-primary-glow blur-sm animate-pulse" />
           </motion.div>
-          <Link 
-            href="/" 
+          <Link
+            href="/"
             className="text-lg font-bold bg-gradient-to-r from-white via-primary-glow to-accent-glow bg-clip-text text-transparent hover:opacity-80 transition-all duration-300"
           >
             WikiVoice
@@ -53,13 +56,13 @@ export default function Navbar() {
           className="hidden md:flex items-center gap-2"
         >
           <Link
-          href="/dashboard"
-          className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          <span>Dashboard</span>
-        </Link>
-          
+            href="/dashboard"
+            className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Dashboard</span>
+          </Link>
+
           <Link
             href="/pricing"
             className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
@@ -67,17 +70,22 @@ export default function Navbar() {
             <Tag className="w-4 h-4" />
             <span>Pricing</span>
           </Link>
-          
+
           <SignedIn>
             <div className="flex items-center gap-2 ml-2 pl-3 border-l border-white/10">
-              <PlanWidget onClick={() => setIsUpgradeModalOpen(true)} />
-              <UsageWidget getToken={getToken} />
+              <Link
+                href="/profile"
+                className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300 flex items-center gap-1.5"
+              >
+                <User className="w-4 h-4" />
+                <span>Profile</span>
+              </Link>
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className="relative ml-1"
               >
-                <UserButton 
+                <UserButton
                   afterSignOutUrl="/"
                   appearance={{
                     elements: {
@@ -89,20 +97,20 @@ export default function Navbar() {
               </motion.div>
             </div>
           </SignedIn>
-          
+
           <SignedOut>
             <div className="flex items-center gap-2 ml-3 pl-3 border-l border-white/10">
               <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                <Link 
-                  href="/sign-in" 
+                <Link
+                  href="/sign-in"
                   className="px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
                 >
                   Sign In
                 </Link>
               </motion.div>
               <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                <Link 
-                  href="/sign-up" 
+                <Link
+                  href="/sign-up"
                   className="bg-gradient-to-r from-primary to-accent text-white font-semibold px-4 py-2 rounded-lg text-sm hover:shadow-lg hover:shadow-primary/30 transition-all duration-300"
                 >
                   Get Started
@@ -145,31 +153,28 @@ export default function Navbar() {
                 <LayoutDashboard className="w-5 h-5" />
                 <span>Dashboard</span>
               </Link>
-              <Link 
-                href="/pricing" 
+              <Link
+                href="/pricing"
                 className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
                 <Tag className="w-5 h-5" />
                 <span>Pricing</span>
               </Link>
-              
+
               <SignedIn>
                 <div className="pt-2 border-t border-white/10 space-y-3">
-                  <div className="flex items-center justify-between mt-3 px-4">
-                    <span className="text-gray-400">Plan</span>
-                    <PlanWidget onClick={() => {
-                      setIsUpgradeModalOpen(true);
-                      setIsMobileMenuOpen(false);
-                    }} />
-                  </div>
-                  <div className="flex items-center justify-between px-4">
-                    <span className="text-gray-400">Usage</span>
-                    <UsageWidget getToken={getToken} />
-                  </div>
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  >
+                    <User className="w-5 h-5" />
+                    <span>My Profile</span>
+                  </Link>
                   <div className="flex items-center justify-between px-4 pt-2 border-t border-white/10">
                     <span className="text-gray-400">Account</span>
-                    <UserButton 
+                    <UserButton
                       afterSignOutUrl="/"
                       appearance={{
                         elements: {
@@ -180,12 +185,12 @@ export default function Navbar() {
                   </div>
                 </div>
               </SignedIn>
-              
+
               <SignedOut>
                 <div className="pt-2 border-t border-white/10 space-y-2">
                   <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                    <Link 
-                      href="/sign-in" 
+                    <Link
+                      href="/sign-in"
                       className="block px-4 py-3 rounded-xl text-center text-gray-300 hover:text-white hover:bg-white/5 transition-all duration-300"
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
@@ -193,8 +198,8 @@ export default function Navbar() {
                     </Link>
                   </motion.div>
                   <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                    <Link 
-                      href="/sign-up" 
+                    <Link
+                      href="/sign-up"
                       className="block bg-gradient-to-r from-primary to-accent text-white font-semibold px-4 py-3 rounded-xl text-center hover:shadow-lg hover:shadow-primary/30 transition-all duration-300"
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
@@ -208,9 +213,9 @@ export default function Navbar() {
         )}
       </AnimatePresence>
 
-      <UpgradeModal 
-        isOpen={isUpgradeModalOpen} 
-        onClose={() => setIsUpgradeModalOpen(false)} 
+      <UpgradeModal
+        isOpen={isUpgradeModalOpen}
+        onClose={() => setIsUpgradeModalOpen(false)}
       />
     </nav>
   );

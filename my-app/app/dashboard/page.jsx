@@ -18,19 +18,30 @@ import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
 import QuickTextInput from '../components/QuickTextInput';
 import { useNotebookStatus } from '../hooks/useNotebookStatus';
+import { useUsage } from '../../hooks/useUsage';
 
 
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
 
   // Use SSE with polling fallback for notebook status
-  const { 
-    notebooks, 
-    activeNotebooks, 
-    loading, 
-    connectionStatus, 
-    refresh 
+  const {
+    notebooks,
+    activeNotebooks,
+    loading,
+    connectionStatus,
+    refresh
   } = useNotebookStatus(userId, getToken);
+
+  // Token Usage State - only fetch when signed in
+  const {
+    usage,
+    loading: usageLoading,
+    refresh: refetchUsage,
+    getUsageColor,
+    getUsageBgColor,
+    formatNumber
+  } = useUsage(isSignedIn ? getToken : null);
 
 
   const deleteNotebookOptimistic = useCallback(async (jobId) => {
@@ -47,7 +58,7 @@ export default function DashboardPage() {
       if (!response.ok) {
         throw new Error('Failed to delete notebook');
       }
-      
+
       // Refresh to get updated list
       refresh();
       return true;
@@ -94,7 +105,7 @@ export default function DashboardPage() {
     }
 
     window.history.replaceState({}, '', window.location.pathname);
-  }, []);
+  }, [refetchUsage]);
 
   /* ----------------------------------------------
      Upload Notebook
@@ -106,6 +117,7 @@ export default function DashboardPage() {
 
   const handleUploadComplete = async () => {
     await refresh();
+    await refetchUsage(); // Refresh usage after upload
   };
 
   const handleTextSubmit = useCallback((result) => {
@@ -116,9 +128,10 @@ export default function DashboardPage() {
     } else {
       // Text was submitted successfully, refresh the list
       refresh();
+      refetchUsage();
       toast.success('Text conversion started!');
     }
-  }, [refresh]);
+  }, [refresh, refetchUsage]);
 
   /* ----------------------------------------------
      Play Notebook (fetch subtitles + open player)
@@ -174,8 +187,6 @@ export default function DashboardPage() {
      Notes Update from Player
   ------------------------------------------------*/
   const handleNotesUpdate = (count) => {
-    // Notes are managed by NotebookCard component internally
-    // This callback is for any additional side effects if needed
     console.log(`Notes updated for ${currentNotebook?.job_id}: ${count} notes`);
   };
 
@@ -208,8 +219,6 @@ export default function DashboardPage() {
           transition={{ duration: 0.5, type: "spring", stiffness: 200 }}
           className="fixed top-20 right-6 md:right-8 z-40 flex flex-row items-center gap-4 justify-end"
         >
-          {/* Usage Progress */}
-
 
           {/* Floating Button */}
           <motion.div
@@ -228,8 +237,6 @@ export default function DashboardPage() {
             </motion.button>
           </motion.div>
         </motion.div>
-
-
 
         {/* Quick Text Input Widget */}
         <motion.div
@@ -257,16 +264,15 @@ export default function DashboardPage() {
               <Sparkles className="w-6 h-6 text-accent-glow" />
               Your Notebooks
             </h2>
-            
+
             {/* Connection status indicator */}
             {notebooks.length > 0 && (
-              <span className={`text-xs px-3 py-1 rounded-full flex items-center gap-1.5 ${
-                connectionStatus === 'sse'
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                  : connectionStatus === 'polling'
+              <span className={`text-xs px-3 py-1 rounded-full flex items-center gap-1.5 ${connectionStatus === 'sse'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : connectionStatus === 'polling'
                   ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                   : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-              }`}>
+                }`}>
                 {connectionStatus === 'sse' && <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />}
                 {connectionStatus === 'polling' && <span className="w-2 h-2 bg-amber-400 rounded-full" />}
                 {connectionStatus === 'disconnected' && <span className="w-2 h-2 bg-gray-400 rounded-full" />}
@@ -276,7 +282,7 @@ export default function DashboardPage() {
               </span>
             )}
           </motion.div>
-          
+
           {loading ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -326,7 +332,7 @@ export default function DashboardPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.1 * i }}
                 >
-                   <NotebookCard
+                  <NotebookCard
                     title={nb.title}
                     voice={nb.voice}
                     status={nb.status}

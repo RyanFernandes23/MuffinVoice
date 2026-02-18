@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Mic, X, UploadCloud, Trash2, Globe, Link, Loader2, Type } from 'lucide-react';
 import { FileTooLargeModal } from './modals/FileTooLargeModal';
+import { useUsage } from '../../hooks/useUsage';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
@@ -12,30 +13,35 @@ const API_BASE_URL = typeof window !== 'undefined'
 
 export default function UploadModal({ isOpen, onClose, onUpload, initialText = '' }) {
   const [activeTab, setActiveTab] = useState('file'); // 'file', 'url', or 'text'
-  
+
   // File upload state
   const [file, setFile] = useState(null);
-  
+
   // URL upload state
   const [url, setUrl] = useState('');
   const [isUrlValid, setIsUrlValid] = useState(false);
-  
+
   // Text upload state
   const [textContent, setTextContent] = useState(initialText);
   const [textTitle, setTextTitle] = useState('');
-  const [remainingTokens, setRemainingTokens] = useState(0);
-  
+
   // Common state
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState(null);
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_bella');
-  
+
+  // Use shared usage hook with retry mechanism
+  const { usage, loading: usageLoading, refresh: refreshUsage } = useUsage(isSignedIn ? getToken : null);
+
   // File too large modal state
   const [showFileTooLargeModal, setShowFileTooLargeModal] = useState(false);
-  const [currentPlan, setCurrentPlan] = useState('explorer');
-  const [maxFileSize, setMaxFileSize] = useState(50 * 1024 * 1024);
+
+  // Derived values from usage
+  const currentPlan = usage.plan_name || 'explorer';
+  const remainingTokens = usage.remaining || 0;
+  const maxFileSize = (usage.max_file_size_mb || 50) * 1024 * 1024;
 
   // Available voices
   const voices = [
@@ -47,12 +53,12 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
     { id: 'em_alex', name: 'Alex (Male)' },
   ];
 
-  // Fetch user's plan and limits when modal opens
+  // Refresh usage when modal opens
   useEffect(() => {
-    if (isOpen) {
-      fetchUserLimits();
+    if (isOpen && isSignedIn) {
+      refreshUsage();
     }
-  }, [isOpen]);
+  }, [isOpen, isSignedIn, refreshUsage]);
 
   // Set initial text if provided and switch to text tab
   useEffect(() => {
@@ -61,29 +67,6 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
       setActiveTab('text');
     }
   }, [initialText, isOpen]);
-
-  const fetchUserLimits = async () => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/usage`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setCurrentPlan(data.data.plan_name || 'explorer');
-          setRemainingTokens(data.data.remaining || 0);
-          const maxMB = data.data.max_file_size_mb || 50;
-          setMaxFileSize(maxMB * 1024 * 1024);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching user limits:', error);
-    }
-  };
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -187,12 +170,12 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
         let errorData = {};
         try {
           errorData = await response.json();
-        } catch (e) {}
-        
+        } catch (e) { }
+
         const errorMsg = errorData.detail || 'Upload limit exceeded';
-        
-        if (errorMsg.toLowerCase().includes('file too large') || 
-            errorMsg.toLowerCase().includes('size')) {
+
+        if (errorMsg.toLowerCase().includes('file too large') ||
+          errorMsg.toLowerCase().includes('size')) {
           setShowFileTooLargeModal(true);
         } else {
           setError(errorMsg);
@@ -347,38 +330,35 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
               </button>
 
               <h2 className="text-3xl font-bold mb-6 text-foreground text-center">Upload Document</h2>
-              
+
               {/* Tab Navigation */}
               <div className="flex mb-6 bg-gray-800/50 rounded-lg p-1">
                 <button
                   onClick={() => setActiveTab('file')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${
-                    activeTab === 'file'
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${activeTab === 'file'
                       ? 'bg-primary-glow text-white shadow-lg'
                       : 'text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <UploadCloud size={18} />
                   <span>Upload File</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('url')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${
-                    activeTab === 'url'
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${activeTab === 'url'
                       ? 'bg-primary-glow text-white shadow-lg'
                       : 'text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <Globe size={18} />
                   <span>Paste URL</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('text')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${
-                    activeTab === 'text'
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-all ${activeTab === 'text'
                       ? 'bg-primary-glow text-white shadow-lg'
                       : 'text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <Type size={18} />
                   <span>Type Text</span>
@@ -395,10 +375,9 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                     exit={{ opacity: 0, x: 20 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <div 
-                      className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-colors duration-200 ${
-                        isDragging ? 'border-primary-glow bg-primary-glow/10' : 'border-gray-600 hover:border-gray-400 bg-gray-800'
-                      }`}
+                    <div
+                      className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-colors duration-200 ${isDragging ? 'border-primary-glow bg-primary-glow/10' : 'border-gray-600 hover:border-gray-400 bg-gray-800'
+                        }`}
                       onDragEnter={handleDragEnter}
                       onDragLeave={handleDragLeave}
                       onDragOver={handleDragOver}
@@ -453,9 +432,8 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                           value={url}
                           onChange={(e) => setUrl(e.target.value)}
                           placeholder="https://example.com/article"
-                          className={`w-full px-4 py-3 bg-gray-800 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-glow text-white placeholder-gray-500 transition-colors ${
-                            isUrlValid ? 'border-green-500/50' : url ? 'border-red-500/50' : 'border-gray-600'
-                          }`}
+                          className={`w-full px-4 py-3 bg-gray-800 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-glow text-white placeholder-gray-500 transition-colors ${isUrlValid ? 'border-green-500/50' : url ? 'border-red-500/50' : 'border-gray-600'
+                            }`}
                           disabled={isUploading}
                         />
                         {isUrlValid && (
@@ -515,7 +493,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                         rows={8}
                         disabled={isUploading}
                       />
-                      
+
                       {/* Token Counter */}
                       <div className="flex justify-between items-center mt-2 text-xs">
                         <span className={exceedsTokens ? 'text-red-400' : 'text-gray-400'}>
@@ -530,7 +508,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                           )}
                         </span>
                       </div>
-                      
+
                       {exceedsTokens && (
                         <p className="text-xs text-red-400 mt-1">
                           Text exceeds your available tokens. Please reduce the text or upgrade your plan.
@@ -580,15 +558,14 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                 >
                   Cancel
                 </motion.button>
-                <motion.button 
+                <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={handleUpload} 
-                  className={`px-6 py-2.5 rounded-full font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${
-                    !canUpload || isUploading
+                  onClick={handleUpload}
+                  className={`px-6 py-2.5 rounded-full font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${!canUpload || isUploading
                       ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                       : 'bg-gradient-to-r from-primary to-accent text-white hover:shadow-primary/30'
-                  }`}
+                    }`}
                   disabled={!canUpload || isUploading}
                 >
                   {isUploading ? (
@@ -613,7 +590,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
           </motion.div>
         )}
       </AnimatePresence>
-      
+
       <FileTooLargeModal
         isOpen={showFileTooLargeModal}
         onClose={() => setShowFileTooLargeModal(false)}

@@ -5,70 +5,23 @@ import { motion } from 'framer-motion';
 import { Circle, Crown, Star, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useUser, useAuth } from "@clerk/nextjs";
+import { useRegion } from "../hooks/useRegion";
 import Navbar from "../components/Navbar";
 
-const pricingPlans = [
-  {
-    id: "explorer",
-    name: "Explorer",
-    icon: Circle,
-    price: "Free",
-    period: "",
-    fileSize: "50MB",
-    tokens: "40K",
-    color: "gray",
-    description: "Perfect for getting started",
-    features: [
-      "50MB max file upload",
-      "40K tokens per month",
-      "Basic voice options",
-      "Email support",
-      "No audio download"
-    ],
-    cta: "Get Started Free",
-    popular: false
+const PRICING_CONFIG = {
+  INR: {
+    symbol: "₹",
+    explorer: "Free",
+    creator: "499",
+    professional: "1079"
   },
-  {
-    id: "creator",
-    name: "Creator",
-    icon: Crown,
-    price: "$5",
-    period: "/month",
-    fileSize: "100MB",
-    tokens: "400K",
-    color: "amber",
-    description: "For content creators who need more power",
-    features: [
-      "100MB max file upload",
-      "400K tokens per month",
-      "All voice options",
-      "Audio download enabled",
-      "Priority support"
-    ],
-    cta: "Choose Plan",
-    popular: true
-  },
-  {
-    id: "professional",
-    name: "Professional",
-    icon: Star,
-    price: "$12",
-    period: "/month",
-    fileSize: "150MB",
-    tokens: "1.6M",
-    color: "purple",
-    description: "For teams and power users",
-    features: [
-      "150MB max file upload",
-      "1.6M tokens per month",
-      "All voices including AI",
-      "Audio download enabled",
-      "24/7 dedicated support"
-    ],
-    cta: "Choose Plan",
-    popular: false
+  USD: {
+    symbol: "$",
+    explorer: "Free",
+    creator: "5",
+    professional: "12"
   }
-];
+};
 
 const colorClasses = {
   gray: {
@@ -207,6 +160,70 @@ export default function PricingPage() {
   const { user, isSignedIn } = useUser();
   const { getToken } = useAuth();
   const [currentPlan, setCurrentPlan] = useState(null);
+  const { currency, symbol, loading: regionLoading } = useRegion();
+
+  const pricingPlans = [
+    {
+      id: "explorer",
+      name: "Explorer",
+      icon: Circle,
+      price: PRICING_CONFIG[currency]?.explorer || "Free",
+      period: "",
+      fileSize: "50MB",
+      tokens: "40K",
+      color: "gray",
+      description: "Perfect for getting started",
+      features: [
+        "50MB max file upload",
+        "40K tokens per month",
+        "Basic voice options",
+        "Email support",
+        "No audio download"
+      ],
+      cta: "Get Started Free",
+      popular: false
+    },
+    {
+      id: "creator",
+      name: "Creator",
+      icon: Crown,
+      price: `${symbol}${PRICING_CONFIG[currency]?.creator || "5"}`,
+      period: "/month",
+      fileSize: "100MB",
+      tokens: "400K",
+      color: "amber",
+      description: "For content creators who need more power",
+      features: [
+        "100MB max file upload",
+        "400K tokens per month",
+        "All voice options",
+        "Audio download enabled",
+        "Priority support"
+      ],
+      cta: "Choose Plan",
+      popular: true
+    },
+    {
+      id: "professional",
+      name: "Professional",
+      icon: Star,
+      price: `${symbol}${PRICING_CONFIG[currency]?.professional || "12"}`,
+      period: "/month",
+      fileSize: "150MB",
+      tokens: "1.6M",
+      color: "purple",
+      description: "For teams and power users",
+      features: [
+        "150MB max file upload",
+        "1.6M tokens per month",
+        "All voices including AI",
+        "Audio download enabled",
+        "24/7 dedicated support"
+      ],
+      cta: "Choose Plan",
+      popular: false
+    }
+  ];
 
   // Fetch user's current plan
   useEffect(() => {
@@ -257,6 +274,7 @@ export default function PricingPage() {
         },
         body: JSON.stringify({
           plan_name: planName.toLowerCase(),
+          currency: currency,
         })
       });
 
@@ -266,7 +284,7 @@ export default function PricingPage() {
       }
 
       const data = await response.json();
-      const { razorpay_subscription_id, key_id, amount, currency } = data;
+      const { razorpay_subscription_id, key_id, amount, currency: serverCurrency } = data;
       const amountInPaise = Math.round(parseFloat(amount) * 100);
 
       const options = {
@@ -275,7 +293,7 @@ export default function PricingPage() {
         name: 'WikiVoice',
         description: `${planName} Plan Subscription`,
         amount: amountInPaise,
-        currency: currency,
+        currency: serverCurrency,
         handler: function (response) {
           toast.success('Payment successful! Your subscription is being activated.', { id: loadingToastId });
         },

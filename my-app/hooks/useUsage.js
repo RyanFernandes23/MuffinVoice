@@ -1,29 +1,61 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+
+// Default usage state - represents unknown/loading state
+const DEFAULT_USAGE = {
+  remaining: 0,
+  allocated: 0,
+  used_this_month: 0,
+  percent_used: 0,
+  plan_name: null, // null indicates not loaded yet
+  max_file_size_mb: 50,
+};
+
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
 
 export function useUsage(getToken) {
-  const [usage, setUsage] = useState({
-    remaining: 0,
-    allocated: 0,
-    percent_used: 0,
-    plan_name: "explorer",
-    max_file_size_mb: 50,
-  });
+  const [usage, setUsage] = useState(DEFAULT_USAGE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const retryCountRef = useRef(0);
+  const isFetchingRef = useRef(false);
 
-  const fetchUsage = useCallback(async () => {
+  const fetchUsage = useCallback(async (isRetry = false) => {
+    // Prevent concurrent fetches
+    if (isFetchingRef.current) {
+      return;
+    }
+
     if (!getToken) {
       setLoading(false);
       return;
     }
 
     try {
-      setLoading(true);
+      isFetchingRef.current = true;
+
+      // Only set loading true on initial fetch, not retries
+      if (!isRetry) {
+        setLoading(true);
+      }
       setError(null);
 
-      const token = await getToken();
+      // Wait for token to be available with a small delay if needed
+      let token = await getToken();
+
+      // If token is not available immediately, wait briefly and retry
+      if (!token) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        token = await getToken();
+      }
+
+      if (!token) {
+        throw new Error("Authentication token not available");
+      }
+
       const response = await fetch("/api/usage", {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -32,18 +64,31 @@ export function useUsage(getToken) {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || "Failed to fetch usage");
+
+        // Check if we should retry (403 might be a timing issue with auth)
+        if (response.status === 403 && retryCountRef.current < MAX_RETRIES) {
+          retryCountRef.current++;
+          const delay = RETRY_DELAYS[retryCountRef.current - 1];
+          console.log(`Retrying usage fetch (attempt ${retryCountRef.current}/${MAX_RETRIES}) after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          isFetchingRef.current = false;
+          return fetchUsage(true);
+        }
+
+        throw new Error(errorData.detail || `Failed to fetch usage: ${response.status}`);
       }
 
       const data = await response.json();
       if (data.success) {
         setUsage(data.data);
+        retryCountRef.current = 0; // Reset retry count on success
       }
     } catch (err) {
       console.error("Error fetching usage:", err);
       setError(err.message);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   }, [getToken]);
 

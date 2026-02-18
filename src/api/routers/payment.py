@@ -1,5 +1,6 @@
 import razorpay
 import json
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select  # Add select
@@ -62,6 +63,7 @@ client = razorpay.Client(
 
 class SubscriptionRequest(BaseModel):
     plan_name: str
+    currency: Optional[str] = "USD"
 
 
 class WebhookRequest(BaseModel):
@@ -768,12 +770,28 @@ async def create_subscription(
         if not db_user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        target_currency = (request.currency or "USD").upper()
+        
         db_plan = db.exec(
-            select(Plan).where(Plan.name == request.plan_name.lower())
+            select(Plan).where(
+                Plan.name == request.plan_name.lower(),
+                Plan.currency == target_currency
+            )
         ).first()
+        
+        # Fallback to USD if requested currency plan not found
+        if not db_plan and target_currency != "USD":
+            db_plan = db.exec(
+                select(Plan).where(
+                    Plan.name == request.plan_name.lower(),
+                    Plan.currency == "USD"
+                )
+            ).first()
+
         if not db_plan:
+            requested_desc = f"'{request.plan_name}' ({request.currency})"
             raise HTTPException(
-                status_code=404, detail=f"Plan '{request.plan_name}' not found"
+                status_code=404, detail=f"Plan {requested_desc} not found"
             )
 
         if not db_plan.is_active:
