@@ -9,7 +9,7 @@ export function UsageWidget({ getToken }) {
   if (loading) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5">
-        <div className="w-24 h-2 bg-gray-700 rounded animate-pulse"></div>
+        <div className="w-24 h-2 bg-white/10 rounded animate-pulse"></div>
       </div>
     );
   }
@@ -21,9 +21,9 @@ export function UsageWidget({ getToken }) {
     <div
       className={`
         flex items-center gap-3 px-3 py-1.5 rounded-lg
-        bg-gray-800/50 border border-gray-700/50
-        ${isLow ? "border-red-500/30" : ""}
-        ${isMedium ? "border-yellow-500/30" : ""}
+        glass-card border border-white/10
+        ${isLow ? "border-error/30" : ""}
+        ${isMedium ? "border-warning/30" : ""}
       `}
       title={`${usage.remaining.toLocaleString()} / ${usage.allocated.toLocaleString()} tokens remaining`}
     >
@@ -43,7 +43,7 @@ export function UsageWidget({ getToken }) {
         </div>
       </div>
 
-      <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+      <div className="w-16 h-1.5 bg-white/10 rounded-lg overflow-hidden">
         <div
           className={`h-full transition-all duration-500 ${getUsageBgColor()}`}
           style={{ width: `${Math.min(usage.percent_used, 100)}%` }}

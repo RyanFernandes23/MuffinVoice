@@ -8,17 +8,18 @@ import { Toaster } from 'react-hot-toast'
 export default function RootLayout({ children }) {
   return (
     <ClerkProvider>
-      <html lang="en" className="relative">
+      <html lang="en" className="dark">
         <head>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+          <meta name="theme-color" content="#000000" />
           <Script
             src="https://checkout.razorpay.com/v1/checkout.js"
             strategy="beforeInteractive"
           />
         </head>
-        <body className="flex flex-col min-h-screen relative">
+        <body className="flex flex-col min-h-screen relative bg-background text-foreground overflow-x-hidden">
           <AnimatedBackground />
           <div className="relative z-10 flex flex-col min-h-screen">
             <Navbar />
@@ -28,27 +29,28 @@ export default function RootLayout({ children }) {
                 toastOptions={{
                   duration: 4000,
                   style: {
-                    background: 'rgba(255, 255, 255, 0.08)', // glass-card background
-                    color: '#e0e0e0', // Light gray text
-                    backdropFilter: 'blur(10px)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    boxShadow: '0 4px 30px rgba(0, 0, 0, 0.2)',
+                    background: '#111111',
+                    color: '#ffffff',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                    borderRadius: '8px',
+                    fontSize: '14px',
                   },
                   success: {
                     iconTheme: {
-                      primary: '#4CAF50', // Green for success
+                      primary: '#10b981',
                       secondary: '#000000',
                     },
                   },
                   error: {
                     iconTheme: {
-                      primary: '#F44336', // Red for error
+                      primary: '#ef4444',
                       secondary: '#000000',
                     },
                   },
                   loading: {
                     iconTheme: {
-                      primary: '#2196F3', // Blue for loading
+                      primary: '#a3a3a3',
                       secondary: '#000000',
                     },
                   },

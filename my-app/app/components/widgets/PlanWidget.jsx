@@ -9,6 +9,7 @@ const planConfig = {
     color: "text-gray-400",
     bgColor: "bg-gray-500/10",
     borderColor: "border-gray-500/20",
+    glowColor: "shadow-gray-500/20",
   },
   creator: {
     icon: Crown,
@@ -16,6 +17,7 @@ const planConfig = {
     color: "text-amber-400",
     bgColor: "bg-amber-500/10",
     borderColor: "border-amber-500/20",
+    glowColor: "shadow-amber-500/20",
   },
   professional: {
     icon: Star,
@@ -23,6 +25,7 @@ const planConfig = {
     color: "text-purple-400",
     bgColor: "bg-purple-500/10",
     borderColor: "border-purple-500/20",
+    glowColor: "shadow-purple-500/20",
   },
 };
 
@@ -35,10 +38,10 @@ export function PlanWidget({ planName, onClick }) {
     <button
       onClick={onClick}
       className={`
-        flex items-center gap-2 px-3 py-1.5 rounded-full
+        flex items-center gap-2 px-3 py-1.5 rounded-lg
         ${config.bgColor} ${config.borderColor}
-        border hover:opacity-80 transition-all duration-200
-        cursor-pointer
+        border hover:opacity-80 hover:shadow-lg ${config.glowColor}
+        transition-all duration-200 cursor-pointer
       `}
       title={`Current plan: ${config.label}`}
     >

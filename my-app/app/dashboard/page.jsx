@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { useAuth, SignedIn } from '@clerk/nextjs';
+import { useAuth } from '@clerk/nextjs';
 import { toast } from 'react-hot-toast';
-import { Plus, Sparkles, FilePlus } from 'lucide-react';
+import { Plus, FilePlus } from 'lucide-react';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
-  : 'http://localhost:8000'; // Default for server-side
+  : 'http://localhost:8000';
 
 
 // Components
@@ -16,7 +16,7 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
-import QuickTextInput from '../components/QuickTextInput';
+
 import { useNotebookStatus } from '../hooks/useNotebookStatus';
 import { useUsage } from '../../hooks/useUsage';
 
@@ -24,7 +24,6 @@ import { useUsage } from '../../hooks/useUsage';
 export default function DashboardPage() {
   const { isSignedIn, getToken, userId } = useAuth();
 
-  // Use SSE with polling fallback for notebook status
   const {
     notebooks,
     activeNotebooks,
@@ -33,15 +32,7 @@ export default function DashboardPage() {
     refresh
   } = useNotebookStatus(userId, getToken);
 
-  // Token Usage State - only fetch when signed in
-  const {
-    usage,
-    loading: usageLoading,
-    refresh: refetchUsage,
-    getUsageColor,
-    getUsageBgColor,
-    formatNumber
-  } = useUsage(isSignedIn ? getToken : null);
+  const { refresh: refetchUsage } = useUsage(isSignedIn ? getToken : null);
 
 
   const deleteNotebookOptimistic = useCallback(async (jobId) => {
@@ -59,20 +50,18 @@ export default function DashboardPage() {
         throw new Error('Failed to delete notebook');
       }
 
-      // Refresh to get updated list
       refresh();
       return true;
     } catch (error) {
       console.error('Error deleting notebook:', error);
       toast.error('Error deleting notebook.');
-      refresh(); // Refresh to revert on error
+      refresh();
       return false;
     }
   }, [userId, getToken, refresh]);
 
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [uploadModalInitialText, setUploadModalInitialText] = useState('');
 
   // Player State
   const [currentNotebook, setCurrentNotebook] = useState(null);
@@ -85,16 +74,10 @@ export default function DashboardPage() {
 
   const prevCompletedCount = useRef(0);
 
-  /* ----------------------------------------------
-     Subtitle Overlay Body Scroll Handling
-  ------------------------------------------------*/
   useEffect(() => {
     document.body.classList.toggle('body-no-scroll', isSubtitleOpen);
   }, [isSubtitleOpen]);
 
-  /* ----------------------------------------------
-     Handle Payment Redirect
-  ------------------------------------------------*/
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const success = params.get('payment') === 'success';
@@ -107,35 +90,21 @@ export default function DashboardPage() {
     window.history.replaceState({}, '', window.location.pathname);
   }, [refetchUsage]);
 
-  /* ----------------------------------------------
-     Upload Notebook
-  ------------------------------------------------*/
   const handleNewNotebookClick = () => {
-    if (!isSignedIn) return;
+    if (!isSignedIn) {
+      toast.error('Please sign in to create notebooks');
+      return;
+    }
     setIsUploadModalOpen(true);
   };
 
   const handleUploadComplete = async () => {
     await refresh();
-    await refetchUsage(); // Refresh usage after upload
+    await refetchUsage();
   };
 
-  const handleTextSubmit = useCallback((result) => {
-    if (result.openModal) {
-      // Open upload modal with pre-filled text
-      setUploadModalInitialText(result.initialText || '');
-      setIsUploadModalOpen(true);
-    } else {
-      // Text was submitted successfully, refresh the list
-      refresh();
-      refetchUsage();
-      toast.success('Text conversion started!');
-    }
-  }, [refresh, refetchUsage]);
 
-  /* ----------------------------------------------
-     Play Notebook (fetch subtitles + open player)
-  ------------------------------------------------*/
+
   const playNotebook = useCallback(
     async (notebook) => {
       if (notebook.status !== 'completed') return;
@@ -151,11 +120,9 @@ export default function DashboardPage() {
         if (res.ok) data = await res.json();
 
         setSubtitleData(data.segments || []);
-        // Construct manifestUrl for the AudioPlayer
         const manifestUrl = `${API_BASE_URL}/api/stream/${notebook.user_id}/${notebook.job_id}/${notebook.voice}/manifest.m3u8`;
         setCurrentNotebook({ ...notebook, manifestUrl });
 
-        // Open audio first, then subtitles to avoid UI glitch
         setShowPlayer(true);
         setTimeout(() => setIsSubtitleOpen(true), 80);
       } catch (err) {
@@ -165,9 +132,6 @@ export default function DashboardPage() {
     [getToken]
   );
 
-  /* ----------------------------------------------
-     Delete Notebook Optimistically
-  ------------------------------------------------*/
   const deleteNotebook = async (jobId) => {
     const success = await deleteNotebookOptimistic(jobId);
 
@@ -183,9 +147,6 @@ export default function DashboardPage() {
     }
   };
 
-  /* ----------------------------------------------
-     Notes Update from Player
-  ------------------------------------------------*/
   const handleNotesUpdate = (count) => {
     console.log(`Notes updated for ${currentNotebook?.job_id}: ${count} notes`);
   };
@@ -200,18 +161,6 @@ export default function DashboardPage() {
 
   return (
     <div className="relative min-h-screen">
-      {/* Fire fly ambient particles */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="firefly-particle" style={{ left: '10%', top: '20%', animationDelay: '0s' }} />
-        <div className="firefly-particle" style={{ left: '25%', top: '60%', animationDelay: '1s' }} />
-        <div className="firefly-particle" style={{ left: '45%', top: '30%', animationDelay: '2s' }} />
-        <div className="firefly-particle" style={{ left: '65%', top: '70%', animationDelay: '3s' }} />
-        <div className="firefly-particle" style={{ left: '80%', top: '40%', animationDelay: '4s' }} />
-        <div className="firefly-particle" style={{ left: '90%', top: '80%', animationDelay: '5s' }} />
-        <div className="firefly-particle" style={{ left: '15%', top: '85%', animationDelay: '6s' }} />
-        <div className="firefly-particle" style={{ left: '55%', top: '15%', animationDelay: '7s' }} />
-      </div>
-
       <main className="relative z-10 pt-24 pb-32">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -219,18 +168,17 @@ export default function DashboardPage() {
           transition={{ duration: 0.5, type: "spring", stiffness: 200 }}
           className="fixed top-20 right-6 md:right-8 z-40 flex flex-row items-center gap-4 justify-end"
         >
-
-          {/* Floating Button */}
+          {/* Floating Action Button - Kindwise pill */}
           <motion.div
             initial={{ opacity: 0, scale: 0, y: -20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             transition={{ duration: 0.5, type: "spring", stiffness: 200 }}
           >
             <motion.button
-              whileHover={{ scale: 1.05, rotate: 3 }}
+              whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleNewNotebookClick}
-              className="bg-gradient-to-r from-primary via-primary-glow to-accent text-white px-6 py-3.5 rounded-full font-bold shadow-2xl hover:shadow-primary/40 flex items-center gap-2 border border-white/10"
+              className="relative group bg-white text-black px-6 py-3.5 rounded-lg font-bold flex items-center gap-2 hover:opacity-90 transition-opacity duration-200"
             >
               <Plus className="w-5 h-5" />
               <span>New Notebook</span>
@@ -238,44 +186,35 @@ export default function DashboardPage() {
           </motion.div>
         </motion.div>
 
-        {/* Quick Text Input Widget */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.8, delay: 0.3 }}
-          className="container mx-auto px-4 md:px-6 pt-8"
-        >
-          <QuickTextInput onTextSubmit={handleTextSubmit} />
-        </motion.div>
+
 
         {/* Notebook Grid */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.8, delay: 0.4 }}
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="container mx-auto px-4 md:px-6 py-8"
         >
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
             className="flex justify-between items-center mb-6"
           >
-            <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-              <Sparkles className="w-6 h-6 text-accent-glow" />
+            <h2 className="text-2xl md:text-3xl font-bold text-white">
               Your Notebooks
             </h2>
 
-            {/* Connection status indicator */}
             {notebooks.length > 0 && (
-              <span className={`text-xs px-3 py-1 rounded-full flex items-center gap-1.5 ${connectionStatus === 'sse'
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+              <span className={`text-xs px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all duration-300 border ${connectionStatus === 'sse'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                 : connectionStatus === 'polling'
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                  : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  : 'bg-neutral-800 text-neutral-500 border-neutral-700'
                 }`}>
-                {connectionStatus === 'sse' && <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />}
-                {connectionStatus === 'polling' && <span className="w-2 h-2 bg-amber-400 rounded-full" />}
-                {connectionStatus === 'disconnected' && <span className="w-2 h-2 bg-gray-400 rounded-full" />}
+                {connectionStatus === 'sse' && <span className="w-2 h-2 bg-emerald-400 rounded-lg animate-pulse" />}
+                {connectionStatus === 'polling' && <span className="w-2 h-2 bg-amber-400 rounded-lg" />}
+                {connectionStatus === 'disconnected' && <span className="w-2 h-2 bg-neutral-500 rounded-lg" />}
                 <span className="font-medium">
                   {connectionStatus === 'sse' ? 'Live Updates' : connectionStatus === 'polling' ? 'Polling' : 'Offline'}
                 </span>
@@ -287,13 +226,14 @@ export default function DashboardPage() {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="glass-card rounded-3xl p-12 text-center max-w-2xl mx-auto"
+              className="rounded-xl p-12 text-center max-w-2xl mx-auto border border-white/[0.08]"
+              style={{ background: '#111111' }}
             >
-              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 mb-6">
-                <div className="w-10 h-10 border-4 border-primary-glow/30 border-t-primary-glow rounded-full animate-spin" />
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-lg bg-white/[0.05] mb-6">
+                <div className="w-10 h-10 border-4 border-neutral-700 border-t-white rounded-lg animate-spin" />
               </div>
               <h3 className="text-2xl font-bold text-white mb-3">Loading your notebooks...</h3>
-              <p className="text-gray-400">
+              <p className="text-neutral-500">
                 {connectionStatus === 'sse' ? 'Connecting for live updates...' : 'Fetching your audiobooks...'}
               </p>
             </motion.div>
@@ -301,24 +241,25 @@ export default function DashboardPage() {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="glass-card rounded-3xl p-12 text-center max-w-2xl mx-auto"
+              className="rounded-xl p-12 text-center max-w-2xl mx-auto border border-white/[0.08]"
+              style={{ background: '#111111' }}
             >
               <motion.div
                 animate={{ y: [0, -10, 0] }}
                 transition={{ duration: 2, repeat: Infinity }}
-                className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 mb-6"
+                className="inline-flex items-center justify-center w-20 h-20 rounded-lg bg-white/[0.05] mb-6"
               >
-                <FilePlus className="w-10 h-10 text-primary-glow" />
+                <FilePlus className="w-10 h-10 text-neutral-400" />
               </motion.div>
               <h3 className="text-2xl font-bold text-white mb-3">No notebooks yet</h3>
-              <p className="text-gray-400 mb-6 max-w-md mx-auto">
+              <p className="text-neutral-500 mb-6 max-w-md mx-auto">
                 Create your first notebook to start converting documents into audiobooks with AI-powered text-to-speech.
               </p>
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={handleNewNotebookClick}
-                className="bg-gradient-to-r from-primary to-accent text-white px-8 py-3 rounded-full font-bold shadow-lg hover:shadow-primary/30 transition-all"
+                className="bg-white text-black px-8 py-3 rounded-lg font-bold hover:opacity-90 transition-opacity"
               >
                 Create Your First Notebook
               </motion.button>
@@ -328,9 +269,14 @@ export default function DashboardPage() {
               {notebooks.map((nb, i) => (
                 <motion.div
                   key={nb.job_id}
-                  initial={{ opacity: 0, y: 40 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.1 * i }}
+                  initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{
+                    duration: 0.5,
+                    delay: Math.min(0.1 * i, 0.5),
+                    ease: [0.16, 1, 0.3, 1]
+                  }}
+                  whileHover={{ y: -4, transition: { duration: 0.2 } }}
                 >
                   <NotebookCard
                     title={nb.title}
@@ -385,12 +331,8 @@ export default function DashboardPage() {
       {/* Upload */}
       <UploadModal
         isOpen={isUploadModalOpen}
-        onClose={() => {
-          setIsUploadModalOpen(false);
-          setUploadModalInitialText('');
-        }}
+        onClose={() => setIsUploadModalOpen(false)}
         onUpload={handleUploadComplete}
-        initialText={uploadModalInitialText}
       />
     </div>
   );

@@ -201,6 +201,41 @@ def handle_subscription_activated(payload: dict, db: Session):
 
         db.commit()
 
+        # Cancel any OTHER active subscriptions for this user (upgrade scenario).
+        # This ensures the old plan is only cancelled AFTER the new one is paid & active.
+        other_active_subs = db.exec(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.status == "active",
+                Subscription.razorpay_subscription_id != razorpay_sub_id,
+            )
+        ).all()
+
+        for old_sub in other_active_subs:
+            try:
+                client.subscription.cancel(old_sub.razorpay_subscription_id)
+                print(f"[WEBHOOK] Cancelled old Razorpay subscription {old_sub.razorpay_subscription_id}")
+            except Exception as cancel_err:
+                print(f"[WEBHOOK] Warning: cancel API call failed for {old_sub.razorpay_subscription_id}: {cancel_err}")
+
+            old_sub.status = "cancelled"
+            old_sub.cancelled_at = datetime.now(timezone.utc)
+            old_sub.cancel_reason = "Replaced by upgraded subscription"
+            old_sub.updated_at = datetime.now(timezone.utc)
+            db.add(old_sub)
+
+            cancel_event = PaymentEvent(
+                user_id=user_id,
+                subscription_id=old_sub.razorpay_subscription_id,
+                event_type="subscription_cancelled_for_upgrade",
+                event_description=f"Old subscription cancelled after new subscription {razorpay_sub_id} activated",
+            )
+            db.add(cancel_event)
+
+        if other_active_subs:
+            db.commit()
+            print(f"[WEBHOOK] Cancelled {len(other_active_subs)} old subscription(s) for user {user_id}")
+
         print(f"[WEBHOOK] Subscription {razorpay_sub_id} activated for user {user_id}")
     except Exception as e:
         print(f"[WEBHOOK] Error handling subscription.activated: {str(e)}")
@@ -832,9 +867,9 @@ async def create_subscription(
                     detail="Downgrade not supported. Please contact support.",
                 )
 
-            # Upgrade: update subscription in Razorpay
+            # Upgrade: try editing subscription in Razorpay first
             try:
-                client.subscription.update(
+                client.subscription.edit(
                     existing_sub.razorpay_subscription_id,
                     {  # type: ignore
                         "plan_id": db_plan.razorpay_plan_id,
@@ -861,11 +896,14 @@ async def create_subscription(
                     "new_plan": db_plan.name,
                     "razorpay_subscription_id": existing_sub.razorpay_subscription_id,
                 }
-            except Exception as e:
-                print(f"Error updating subscription: {e}")
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to upgrade subscription: {str(e)}"
-                )
+            except Exception as edit_err:
+                # Edit may fail for UPI subscriptions or other restrictions.
+                # DON'T cancel the old subscription here — the user hasn't paid yet.
+                # Instead, fall through to create a new subscription.
+                # The old subscription will be cancelled automatically by the
+                # subscription.activated webhook handler once the new one is paid.
+                print(f"[UPGRADE] In-place edit failed ({edit_err}), creating new subscription. Old sub will be cancelled after new one is activated.")
+                # Fall through to create a brand-new subscription below
 
         # 2. Create a pending Payment record in your database
         # This records the initiation of a payment attempt

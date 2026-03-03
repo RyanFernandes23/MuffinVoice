@@ -142,22 +142,26 @@ export default function QuickTextInput({ onTextSubmit }) {
   }, [canSubmit, handleSubmit]);
 
   const getUsageColor = () => {
-    if (usageData.percent_used >= 90) return { bar: 'bg-red-500', text: 'text-red-400' };
-    if (usageData.percent_used >= 70) return { bar: 'bg-amber-500', text: 'text-amber-400' };
-    return { bar: 'bg-emerald-500', text: 'text-emerald-400' };
+    if (usageData.percent_used >= 90) return 'text-red-400';
+    if (usageData.percent_used >= 70) return 'text-amber-400';
+    return 'text-emerald-400';
   };
 
-  const usageColors = getUsageColor();
+  const getUsageBarColor = () => {
+    if (usageData.percent_used >= 90) return 'bg-red-500';
+    if (usageData.percent_used >= 70) return 'bg-amber-500';
+    return 'bg-emerald-500';
+  };
 
   const getPlanBadge = () => {
     const plan = usageData.plan_name?.toLowerCase() || 'explorer';
     if (plan.includes('professional') || plan.includes('pro')) {
-      return { bg: 'bg-purple-500/20', border: 'border-purple-500/40', text: 'text-purple-300', icon: Crown };
+      return { icon: Crown };
     }
     if (plan.includes('creator')) {
-      return { bg: 'bg-amber-500/20', border: 'border-amber-500/40', text: 'text-amber-300', icon: Zap };
+      return { icon: Zap };
     }
-    return { bg: 'bg-gray-500/20', border: 'border-gray-500/40', text: 'text-gray-300', icon: null };
+    return { icon: null };
   };
 
   const planBadge = getPlanBadge();
@@ -168,13 +172,14 @@ export default function QuickTextInput({ onTextSubmit }) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="glass-card rounded-2xl border border-white/10 p-6"
+      className="rounded-xl border border-white/[0.08] p-6 relative overflow-hidden"
+      style={{ background: '#111111' }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 relative z-10">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center">
-            <Type className="w-5 h-5 text-primary-glow" />
+          <div className="w-10 h-10 rounded-xl bg-white/[0.08] flex items-center justify-center">
+            <Type className="w-5 h-5 text-white" />
           </div>
           <div>
             <h3 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -185,12 +190,12 @@ export default function QuickTextInput({ onTextSubmit }) {
                 </span>
               )}
             </h3>
-            <p className="text-xs text-gray-500">Paste your text and convert to audio</p>
+            <p className="text-xs text-neutral-500">Paste your text and convert to audio</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className={`text-xs font-medium px-3 py-1 rounded-full border ${planBadge.bg} ${planBadge.border} ${planBadge.text} flex items-center gap-1`}>
+          <span className="text-xs font-medium px-3 py-1 rounded-lg border border-white/[0.08] bg-white/[0.04] text-neutral-400 flex items-center gap-1">
             {PlanIcon && <PlanIcon className="w-3 h-3" />}
             <span className="capitalize">{usageData.plan_name || 'Explorer'}</span>
           </span>
@@ -198,24 +203,24 @@ export default function QuickTextInput({ onTextSubmit }) {
       </div>
 
       {/* Token Usage Bar */}
-      <div className="mb-4">
+      <div className="mb-4 relative z-10">
         <div className="flex items-center justify-between text-xs mb-1.5">
-          <span className="text-gray-400">Token Usage</span>
-          <span className="text-gray-300">
-            <span className={usageColors.text}>{usageData.remaining.toLocaleString()}</span>
-            <span className="text-gray-500"> / {usageData.allocated.toLocaleString()} remaining</span>
+          <span className="text-neutral-500">Token Usage</span>
+          <span className="text-neutral-400">
+            <span className={getUsageColor()}>{usageData.remaining.toLocaleString()}</span>
+            <span className="text-neutral-600"> / {usageData.allocated.toLocaleString()} remaining</span>
           </span>
         </div>
-        <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+        <div className="h-1.5 bg-neutral-800 rounded-lg overflow-hidden">
           {!usageLoading && usageData.plan_name !== null ? (
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${Math.min(usageData.percent_used, 100)}%` }}
               transition={{ duration: 0.8, ease: 'easeOut' }}
-              className={`h-full rounded-full ${usageColors.bar}`}
+              className={`h-full rounded-lg ${getUsageBarColor()}`}
             />
           ) : (
-            <div className="h-full w-1/4 bg-gray-700 rounded-full animate-pulse" />
+            <div className="h-full w-1/4 bg-neutral-700 rounded-lg animate-pulse" />
           )}
         </div>
       </div>
@@ -226,7 +231,7 @@ export default function QuickTextInput({ onTextSubmit }) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title (optional)"
-        className="w-full px-4 py-2.5 mb-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/30 transition-all"
+        className="w-full px-4 py-2.5 mb-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20 transition-all relative z-10"
         disabled={isLoading}
       />
 
@@ -236,12 +241,12 @@ export default function QuickTextInput({ onTextSubmit }) {
         onChange={(e) => { setText(e.target.value); setError(null); }}
         onKeyDown={handleKeyDown}
         placeholder="Paste or type your text here... Press Ctrl+Enter to submit"
-        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/30 transition-all resize-none min-h-[140px]"
+        className="w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-white/20 transition-all resize-none min-h-[140px] relative z-10"
         disabled={isLoading}
       />
 
       {/* Stats Row */}
-      <div className="flex items-center justify-between mt-2 mb-4 text-xs text-gray-500">
+      <div className="flex items-center justify-between mt-2 mb-4 text-xs text-neutral-500 relative z-10">
         <div className="flex items-center gap-4">
           <span>{stats.wordCount} words</span>
           <span>{stats.charCount.toLocaleString()} chars</span>
@@ -249,10 +254,10 @@ export default function QuickTextInput({ onTextSubmit }) {
         <div className="flex items-center gap-2">
           {stats.tokenCount > 0 && (
             <>
-              <span className={exceedsTokens ? 'text-red-400 font-medium' : 'text-gray-400'}>
+              <span className={exceedsTokens ? 'text-red-400 font-medium' : 'text-neutral-400'}>
                 {stats.tokenCount.toLocaleString()} tokens
               </span>
-              <span className="text-gray-600">→</span>
+              <span className="text-neutral-600">→</span>
               <span className={`font-medium ${exceedsTokens ? 'text-red-400' : tokensAfterText < usageData.remaining * 0.1 ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {tokensAfterText.toLocaleString()} left
               </span>
@@ -276,10 +281,10 @@ export default function QuickTextInput({ onTextSubmit }) {
       </AnimatePresence>
 
       {/* Controls */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 relative z-10">
         {/* Voice Selector */}
-        <div className="flex items-center gap-2 bg-white/5 rounded-xl px-3 py-2 border border-white/10">
-          <Mic className="w-4 h-4 text-gray-400" />
+        <div className="flex items-center gap-2 bg-white/[0.04] rounded-xl px-3 py-2 border border-white/[0.08]">
+          <Mic className="w-4 h-4 text-neutral-400" />
           <select
             value={selectedVoice}
             onChange={(e) => setSelectedVoice(e.target.value)}
@@ -292,7 +297,7 @@ export default function QuickTextInput({ onTextSubmit }) {
             }}
           >
             {voices.map((voice) => (
-              <option key={voice.id} value={voice.id} className="bg-gray-800">
+              <option key={voice.id} value={voice.id} className="bg-neutral-900">
                 {voice.name} ({voice.tag})
               </option>
             ))}
@@ -304,7 +309,7 @@ export default function QuickTextInput({ onTextSubmit }) {
         {text && (
           <button
             onClick={handleClear}
-            className="text-sm text-gray-400 hover:text-white transition-colors px-3 py-2 rounded-lg hover:bg-white/5 flex items-center gap-1.5"
+            className="text-sm text-neutral-500 hover:text-white transition-colors px-3 py-2 rounded-lg hover:bg-white/[0.04] flex items-center gap-1.5"
             disabled={isLoading}
           >
             <X className="w-4 h-4" /> Clear
@@ -316,9 +321,9 @@ export default function QuickTextInput({ onTextSubmit }) {
           whileTap={{ scale: canSubmit ? 0.98 : 1 }}
           onClick={handleSubmit}
           disabled={!canSubmit}
-          className={`px-5 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2 text-sm ${!canSubmit
-            ? 'bg-gray-800/50 text-gray-500 cursor-not-allowed border border-white/5'
-            : 'bg-gradient-to-r from-primary to-accent text-white hover:shadow-lg hover:shadow-primary/20'
+          className={`px-5 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 text-sm ${!canSubmit
+            ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed border border-white/[0.06]'
+            : 'bg-white text-black hover:opacity-90'
             }`}
         >
           {isLoading ? (

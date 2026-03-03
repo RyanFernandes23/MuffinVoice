@@ -14,7 +14,7 @@ import { useVoiceStatus } from '../hooks/useVoiceStatus';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
-  : 'http://localhost:8000'; // Default for server-side
+  : 'http://localhost:8000';
 
 
 export default function AudioPlayer({
@@ -42,76 +42,61 @@ export default function AudioPlayer({
   const [isMuted, setIsMuted] = useState(false);
   const [isTokenReady, setIsTokenReady] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
-  
+
   const [showVoiceOptions, setShowVoiceOptions] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_bella');
   const [processingVoice, setProcessingVoice] = useState(null);
 
-  const [showModal, setShowModal] = useState(false); // For general info/error messages
+  const [showModal, setShowModal] = useState(false);
   const [modalMessage, setModalMessage] = useState('');
-  const [modalType, setModalType] = useState('info'); // 'info', 'success', 'error'
+  const [modalType, setModalType] = useState('info');
 
   const [currentManifestUrl, setCurrentManifestUrl] = useState(manifestUrl);
-  
-  // Notes state
+
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [showNotesSidebar, setShowNotesSidebar] = useState(false);
   const [notes, setNotes] = useState([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [isSavingNote, setIsSavingNote] = useState(false);
-  
+
   const audioRef = useRef(null);
   const hlsRef = useRef(null);
   const voiceOptionsRef = useRef(null);
-  const tokenRef = useRef(null); // Ref to hold the current fresh token
+  const tokenRef = useRef(null);
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'ready':
-        return 'text-emerald-400';
-      case 'processing':
-        return 'text-amber-400';
-      case 'not started':
-        return 'text-gray-400';
-      default:
-        return 'text-gray-400';
+      case 'ready': return 'text-emerald-400';
+      case 'processing': return 'text-amber-400';
+      case 'not started': return 'text-neutral-400';
+      default: return 'text-neutral-400';
     }
   };
 
   const getStatusBg = (status) => {
     switch (status) {
-      case 'ready':
-        return 'bg-emerald-500/20';
-      case 'processing':
-        return 'bg-amber-500/20';
-      case 'not started':
-        return 'bg-gray-500/20';
-      default:
-        return 'bg-gray-500/20';
+      case 'ready': return 'bg-emerald-500/10';
+      case 'processing': return 'bg-amber-500/10';
+      case 'not started': return 'bg-neutral-500/10';
+      default: return 'bg-neutral-500/10';
     }
   };
 
-  // Close voice options when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (voiceOptionsRef.current && !voiceOptionsRef.current.contains(event.target)) {
         setShowVoiceOptions(false);
       }
     };
-
     if (showVoiceOptions) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [showVoiceOptions]);
 
-  // Use SSE with polling fallback for voice status
   const { voices, loadingVoices, connectionStatus } = useVoiceStatus(
-    userId,
-    jobId,
-    getToken,
-    showVoiceOptions // Only connect when voice options pane is open
+    userId, jobId, getToken, showVoiceOptions
   );
 
   useEffect(() => {
@@ -120,7 +105,6 @@ export default function AudioPlayer({
     }
   }, [seekTime, isSeeking]);
 
-  // Effect to keep token fresh in background
   useEffect(() => {
     const fetchToken = async () => {
       try {
@@ -131,66 +115,39 @@ export default function AudioPlayer({
         console.error("Failed to refresh token:", error);
       }
     };
-
-    fetchToken(); // Initial fetch
-    const interval = setInterval(fetchToken, 50000); // Refresh token every 50 seconds (Clerk tokens expire in 60s)
+    fetchToken();
+    const interval = setInterval(fetchToken, 50000);
     return () => clearInterval(interval);
   }, [getToken]);
 
-  // Update manifest URL when notebook changes
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.load();
-    }
+    if (audioRef.current) audioRef.current.load();
     setIsPlaying(false);
-
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    setSelectedVoice('af_bella'); // Reset selected voice to default
-    setCurrentManifestUrl(manifestUrl); // Update the manifest URL
-    
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    setSelectedVoice('af_bella');
+    setCurrentManifestUrl(manifestUrl);
     setCurrentTime(0);
     setDuration(0);
   }, [manifestUrl]);
 
-  // Handle standard audio events (Time, Duration, Progress)
   useEffect(() => {
     const audio = audioRef.current;
-
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
-      if (onTimeUpdateProp && !isSeeking) {
-        onTimeUpdateProp(audio.currentTime);
-      }
+      if (onTimeUpdateProp && !isSeeking) onTimeUpdateProp(audio.currentTime);
     };
-
     const onLoadedMetadata = () => {
       setDuration(audio.duration);
-      if (onDurationChange) {
-        onDurationChange(audio.duration);
-      }
+      if (onDurationChange) onDurationChange(audio.duration);
     };
-
     const onProgress = () => {
       if (audio.buffered.length > 0) {
         const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
-        const percentage = (bufferedEnd / audio.duration) * 100;
-        setBuffered(percentage);
+        setBuffered((bufferedEnd / audio.duration) * 100);
       }
     };
-
-    const onSeeking = () => {
-      if (!isSeeking) {
-        setIsSeeking(true);
-      }
-    };
-
-    const onSeeked = () => {
-      setIsSeeking(false);
-    };
+    const onSeeking = () => { if (!isSeeking) setIsSeeking(true); };
+    const onSeeked = () => { setIsSeeking(false); };
 
     if (audio) {
       audio.addEventListener('timeupdate', onTimeUpdate);
@@ -198,7 +155,6 @@ export default function AudioPlayer({
       audio.addEventListener('progress', onProgress);
       audio.addEventListener('seeking', onSeeking);
       audio.addEventListener('seeked', onSeeked);
-
       return () => {
         audio.removeEventListener('timeupdate', onTimeUpdate);
         audio.removeEventListener('loadedmetadata', onLoadedMetadata);
@@ -209,18 +165,14 @@ export default function AudioPlayer({
     }
   }, [onDurationChange, onTimeUpdateProp, isSeeking]);
 
-  // Fetch notes when sidebar opens
   useEffect(() => {
     if (!showNotesSidebar || !userId || !jobId || !getToken) return;
-
     const fetchNotes = async () => {
       setLoadingNotes(true);
       try {
         const token = await getToken();
         const response = await fetch(`${API_BASE_URL}/api/notes/${userId}/${jobId}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: { 'Authorization': `Bearer ${token}` },
         });
         if (response.ok) {
           const data = await response.json();
@@ -232,47 +184,33 @@ export default function AudioPlayer({
         setLoadingNotes(false);
       }
     };
-
     fetchNotes();
   }, [userId, jobId, getToken, showNotesSidebar]);
 
-  // Handle saving a note
   const handleSaveNote = async (noteText) => {
-    if (!userId || !jobId || !getToken) return; 
-    
+    if (!userId || !jobId || !getToken) return;
     setIsSavingNote(true);
     try {
       const token = await getToken();
       const method = editingNote ? 'PUT' : 'POST';
-      const url = editingNote 
+      const url = editingNote
         ? `${API_BASE_URL}/api/notes/${userId}/${jobId}/${editingNote.id}`
         : `${API_BASE_URL}/api/notes/${userId}/${jobId}?timestamp=${currentTime}&user_note=${encodeURIComponent(noteText)}&subtitle_text=${encodeURIComponent(currentSubtitle)}`;
-
       const response = await fetch(url, {
         method,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: editingNote ? JSON.stringify({ user_note: noteText }) : undefined,
       });
-
       if (response.ok) {
         const newNote = await response.json();
-        
         let updatedNotes;
         if (editingNote) {
           updatedNotes = notes.map(n => n.id === editingNote.id ? newNote : n);
-          setNotes(updatedNotes);
         } else {
           updatedNotes = [...notes, newNote];
-          setNotes(updatedNotes);
         }
-
-        if (onNotesUpdate) {
-          onNotesUpdate(updatedNotes.length);
-        }
-
+        setNotes(updatedNotes);
+        if (onNotesUpdate) onNotesUpdate(updatedNotes.length);
         setShowNotesModal(false);
         setEditingNote(null);
       }
@@ -283,98 +221,53 @@ export default function AudioPlayer({
     }
   };
 
-  // Handle deleting a note
   const handleDeleteNote = async (noteId) => {
     if (!userId || !jobId || !getToken) return;
-
     try {
       const token = await getToken();
       const response = await fetch(`${API_BASE_URL}/api/notes/${userId}/${jobId}/${noteId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
       });
-
       if (response.ok) {
         const updatedNotes = notes.filter(n => n.id !== noteId);
         setNotes(updatedNotes);
-        
-        if (onNotesUpdate) {
-          onNotesUpdate(updatedNotes.length);
-        }
+        if (onNotesUpdate) onNotesUpdate(updatedNotes.length);
       }
     } catch (error) {
       console.error('Error deleting note:', error);
     }
   };
 
-  // Handle editing a note
-  const handleEditNote = (note) => {
-    setEditingNote(note);
-    setShowNotesModal(true);
-  };
+  const handleEditNote = (note) => { setEditingNote(note); setShowNotesModal(true); };
+  const handleNoteClick = (timestamp) => { if (audioRef.current) audioRef.current.currentTime = timestamp; };
 
-  // Handle note click - seek to that time
-  const handleNoteClick = (timestamp) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timestamp;
-    }
-  };
-
-  // Initialize HLS with Authentication
   useEffect(() => {
-    if (!isTokenReady) return; 
-
+    if (!isTokenReady) return;
     if (Hls.isSupported() && audioRef.current && currentManifestUrl) {
-      
       const hlsConfig = {
         xhrSetup: (xhr, url) => {
-          if (tokenRef.current) {
-            xhr.setRequestHeader('Authorization', `Bearer ${tokenRef.current}`);
-          }
+          if (tokenRef.current) xhr.setRequestHeader('Authorization', `Bearer ${tokenRef.current}`);
         },
       };
-
       const hls = new Hls(hlsConfig);
       hls.loadSource(currentManifestUrl);
       hls.attachMedia(audioRef.current);
       hlsRef.current = hls;
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log("HLS Manifest Parsed. Ready for playback.");
-        // We now explicitly set isPlaying to true here
-        // to indicate that the media is ready to be played.
-        // The separate useEffect will handle audioRef.current.play()
-        setIsPlaying(true); 
-      });
-
-      hls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-           console.error("Fatal HLS error:", data);
-        }
-      });
-
-      return () => {
-        hls.destroy();
-      };
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { setIsPlaying(true); });
+      hls.on(Hls.Events.ERROR, (event, data) => { if (data.fatal) console.error("Fatal HLS error:", data); });
+      return () => { hls.destroy(); };
     } else {
-        if (audioRef.current) {
-            audioRef.current.pause();
-        }
-        setIsPlaying(false);
+      if (audioRef.current) audioRef.current.pause();
+      setIsPlaying(false);
     }
   }, [currentManifestUrl, isTokenReady]);
 
-  // Effect to handle play/pause based on isPlaying state
   useEffect(() => {
     if (audioRef.current) {
       if (isPlaying) {
         audioRef.current.play().catch(e => {
-          console.error("Error attempting to play audio:", e);
-          if (e.name === "NotAllowedError" || e.name === "AbortError") {
-            setIsPlaying(false);
-          }
+          if (e.name === "NotAllowedError" || e.name === "AbortError") setIsPlaying(false);
         });
       } else {
         audioRef.current.pause();
@@ -382,29 +275,15 @@ export default function AudioPlayer({
     }
   }, [isPlaying]);
 
-
   const togglePlay = () => {
     if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
+      if (isPlaying) audioRef.current.pause(); else audioRef.current.play();
       setIsPlaying(!isPlaying);
     }
   };
 
-  const handleRewind = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10); // Rewind 10 seconds
-    }
-  };
-
-  const handleFastForward = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = Math.min(audioRef.current.duration, audioRef.current.currentTime + 10); // Fast forward 10 seconds
-    }
-  };
+  const handleRewind = () => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10); };
+  const handleFastForward = () => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration, audioRef.current.currentTime + 10); };
 
   const handleSeek = (e) => {
     if (audioRef.current) {
@@ -423,53 +302,41 @@ export default function AudioPlayer({
 
   const handleVolumeChange = (e) => {
     const newVolume = parseFloat(e.target.value);
-    if (audioRef.current) {
-      audioRef.current.volume = newVolume;
-    }
+    if (audioRef.current) audioRef.current.volume = newVolume;
     setVolume(newVolume);
   };
 
   const handlePlaybackRateChange = (rate) => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = rate;
-    }
+    if (audioRef.current) audioRef.current.playbackRate = rate;
     setPlaybackRate(rate);
   };
 
   const handleVoiceSelect = async (voiceId, voiceStatus) => {
     if (voiceStatus === 'processing') {
       setModalType('info');
-      setModalMessage('⏳ Please wait while this voice is being processed. Check back in a few moments!');
+      setModalMessage('⏳ Please wait while this voice is being processed.');
       setShowModal(true);
       return;
     }
-    
     if (voiceStatus === 'not started') {
       setProcessingVoice(voiceId);
       try {
         const token = await getToken();
         const response = await fetch(`${API_BASE_URL}/api/process_voice/${userId}/${jobId}/${voiceId}`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: { 'Authorization': `Bearer ${token}` },
         });
-        
         if (response.ok) {
-          console.log(`Started processing voice: ${voiceId}`);
           setModalType('success');
-          setModalMessage('✓ Processing started for this voice. Please wait while it\'s being processed!');
+          setModalMessage('✓ Processing started for this voice.');
           setShowModal(true);
-          // Status will update automatically via SSE/polling hook
         } else {
           const error = await response.json();
-          console.error(`Error processing voice: ${error.detail}`);
           setModalType('error');
           setModalMessage(`Error: ${error.detail}`);
           setShowModal(true);
         }
       } catch (error) {
-        console.error('Error starting voice processing:', error);
         setModalType('error');
         setModalMessage('Error starting voice processing');
         setShowModal(true);
@@ -478,46 +345,26 @@ export default function AudioPlayer({
       }
     } else {
       setSelectedVoice(voiceId);
-      
       const newManifestUrl = `${API_BASE_URL}/api/stream/${userId}/${jobId}/${voiceId}/manifest.m3u8`;
-      
-      if (audioRef.current) {
-        audioRef.current.pause();
-        setIsPlaying(false);
-      }
-      
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-      }
-      
+      if (audioRef.current) { audioRef.current.pause(); setIsPlaying(false); }
+      if (hlsRef.current) hlsRef.current.destroy();
       setCurrentManifestUrl(newManifestUrl);
       setShowVoiceOptions(false);
     }
   };
 
-
-
   const handleMuteToggle = () => {
-    if (audioRef.current) {
-      audioRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
+    if (audioRef.current) { audioRef.current.muted = !isMuted; setIsMuted(!isMuted); }
   };
 
   const getVolumeIcon = () => {
-    if (isMuted || volume === 0) {
-      return <VolumeX className="h-5 w-5" />;
-    } else if (volume < 0.5) {
-      return <Volume1 className="h-5 w-5" />;
-    } else {
-      return <Volume2 className="h-5 w-5" />;
-    }
+    if (isMuted || volume === 0) return <VolumeX className="h-5 w-5" />;
+    if (volume < 0.5) return <Volume1 className="h-5 w-5" />;
+    return <Volume2 className="h-5 w-5" />;
   };
 
   const handleClosePlayer = () => {
-    if (isSubtitleOpen && onCloseSubtitle) {
-      onCloseSubtitle();
-    }
+    if (isSubtitleOpen && onCloseSubtitle) onCloseSubtitle();
     setShowNotesModal(false);
     setShowNotesSidebar(false);
     setEditingNote(null);
@@ -530,60 +377,56 @@ export default function AudioPlayer({
       animate={{ y: 0 }}
       exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
-      className="fixed bottom-0 left-0 right-0 glass-card text-foreground p-4 pb-6 shadow-lg z-50 flex flex-col rounded-t-3xl border-t border-l border-r border-white/10"
+      className="fixed bottom-0 left-0 right-0 text-white p-4 pb-6 z-50 flex flex-col rounded-t-2xl"
+      style={{
+        background: '#0a0a0a',
+        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+        borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+      }}
     >
-      <button onClick={handleClosePlayer} className="absolute top-3 right-3 text-gray-400 hover:text-white transition-colors p-1 rounded-full">
+      <button onClick={handleClosePlayer} className="absolute top-3 right-3 text-neutral-500 hover:text-white transition-colors p-1 rounded-lg">
         <X size={20} />
       </button>
 
-      <audio ref={audioRef} /> {/* Audio tag can be invisible, no need for display:none */}
+      <audio ref={audioRef} />
 
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-xl font-bold text-white max-w-[calc(100%-60px)] truncate">
-          <Headphones className="inline-block mr-2 text-primary-glow" size={20} /> {title}
+          <Headphones className="inline-block mr-2 text-neutral-400" size={20} /> {title}
         </h3>
       </div>
 
       {/* Main Controls & Progress Bar */}
       <div className="flex items-center gap-4 w-full">
-        <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
+        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
           onClick={handleRewind}
-          className="text-white p-2 rounded-full hover:bg-white/10 transition-colors"
+          className="text-neutral-400 p-2 rounded-lg hover:text-white hover:bg-white/[0.05] transition-all"
         >
           <Rewind size={24} />
         </motion.button>
 
-        <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
+        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
           onClick={togglePlay}
-          className="bg-primary text-white p-3 rounded-full shadow-lg hover:bg-primary-dark transition-colors"
+          className="bg-white text-black p-3 rounded-lg hover:opacity-90 transition-opacity"
         >
-          {isPlaying ? (
-            <Pause size={28} />
-          ) : (
-            <Play size={28} className="pl-0.5" />
-          )}
+          {isPlaying ? <Pause size={28} /> : <Play size={28} className="pl-0.5" />}
         </motion.button>
 
-        <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
+        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
           onClick={handleFastForward}
-          className="text-white p-2 rounded-full hover:bg-white/10 transition-colors"
+          className="text-neutral-400 p-2 rounded-lg hover:text-white hover:bg-white/[0.05] transition-all"
         >
           <FastForward size={24} />
         </motion.button>
 
         {/* Progress Bar */}
         <div className="flex-1 flex items-center gap-3">
-          <span className="text-sm text-gray-400 w-12 text-center">{formatTime(currentTime)}</span>
+          <span className="text-sm text-neutral-500 w-12 text-center">{formatTime(currentTime)}</span>
           <div className="relative flex-1 group">
             <input
               type="range"
-              className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer thumb-primary-glow"
+              className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
               value={currentTime}
               max={duration || 0}
               onChange={handleSeek}
@@ -591,43 +434,36 @@ export default function AudioPlayer({
               onMouseUp={() => setIsSeeking(false)}
               style={{
                 backgroundSize: `${(currentTime / (duration || 1)) * 100}% 100%`,
-                backgroundImage: `linear-gradient(to right, var(--primary) 0%, var(--primary) 100%)`,
+                backgroundImage: `linear-gradient(to right, #ffffff 0%, #ffffff 100%)`,
                 backgroundRepeat: 'no-repeat',
               }}
             />
-            {/* Buffered progress */}
             <div
-              className="absolute top-1/2 left-0 h-1 bg-white/30 rounded-full -translate-y-1/2 -z-10"
+              className="absolute top-1/2 left-0 h-1 bg-white/20 rounded-lg -translate-y-1/2 -z-10"
               style={{ width: `${buffered}%` }}
             />
           </div>
-          <span className="text-sm text-gray-400 w-12 text-center">{formatTime(duration)}</span>
+          <span className="text-sm text-neutral-500 w-12 text-center">{formatTime(duration)}</span>
         </div>
       </div>
 
-      {/* Secondary Controls (Volume, Speed, Subtitle, Notes, Voice) */}
-      <div className="flex items-center justify-end gap-6 mt-4">
+      {/* Secondary Controls */}
+      <div className="flex items-center justify-end gap-4 mt-4 flex-wrap">
         {/* Volume Control */}
         <div className="flex items-center gap-2">
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
             onClick={handleMuteToggle}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-neutral-500 hover:text-white transition-colors"
           >
             {getVolumeIcon()}
           </motion.button>
           <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
+            type="range" min="0" max="1" step="0.01" value={volume}
             onChange={handleVolumeChange}
-            className="w-20 h-1 bg-white/20 rounded-full appearance-none cursor-pointer thumb-primary-glow"
+            className="w-20 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
             style={{
               backgroundSize: `${volume * 100}% 100%`,
-              backgroundImage: `linear-gradient(to right, var(--primary) 0%, var(--primary) 100%)`,
+              backgroundImage: `linear-gradient(to right, #ffffff 0%, #ffffff 100%)`,
               backgroundRepeat: 'no-repeat',
             }}
           />
@@ -635,14 +471,17 @@ export default function AudioPlayer({
 
         {/* Playback Speed */}
         <div className="flex items-center gap-2">
-          <Settings2 size={18} className="text-gray-400" />
+          <Settings2 size={18} className="text-neutral-500" />
           {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
             <motion.button
               key={rate}
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={() => handlePlaybackRateChange(rate)}
-              className={`text-xs px-3 py-1 rounded-full transition-colors duration-200 ${playbackRate === rate ? 'bg-primary text-white font-semibold shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20'}`}
+              className={`text-xs px-3 py-1 rounded-lg transition-all duration-200 ${playbackRate === rate
+                ? 'bg-white text-black font-semibold'
+                : 'bg-white/[0.05] text-neutral-400 hover:text-white hover:bg-white/[0.08]'
+                }`}
             >
               {rate}x
             </motion.button>
@@ -650,42 +489,43 @@ export default function AudioPlayer({
         </div>
 
         {/* Subtitle Button */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
           onClick={onToggleSubtitle}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ${isSubtitleOpen ? 'bg-primary text-white shadow-md' : 'glass-button text-foreground border border-gray-600 hover:border-white/40'}`}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${isSubtitleOpen
+            ? 'bg-white text-black'
+            : 'text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20'
+            }`}
         >
           <FileText size={18} /> Subtitles
         </motion.button>
 
         {/* Notes Button */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
           onClick={() => setShowNotesModal(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-full glass-button text-foreground border border-gray-600 hover:border-white/40 transition-all duration-200"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20 transition-all duration-200"
         >
           <StickyNote size={18} /> Add Note
         </motion.button>
 
         {/* Toggle Notes Sidebar */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
           onClick={() => setShowNotesSidebar(!showNotesSidebar)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ${showNotesSidebar ? 'bg-accent text-white shadow-md' : 'glass-button text-foreground border border-gray-600 hover:border-white/40'}`}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${showNotesSidebar
+            ? 'bg-white text-black'
+            : 'text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20'
+            }`}
         >
           <MessageSquareText size={18} /> Notes {notes.length > 0 && `(${notes.length})`}
         </motion.button>
 
         {/* Switch Voice Button */}
         <div className="relative" ref={voiceOptionsRef}>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
             onClick={() => setShowVoiceOptions(!showVoiceOptions)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ${showVoiceOptions ? 'bg-primary text-white shadow-md' : 'glass-button text-foreground border border-gray-600 hover:border-white/40'}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${showVoiceOptions
+              ? 'bg-white text-black'
+              : 'text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20'
+              }`}
           >
             <Mic2 size={18} /> Switch Voice <ChevronDown size={16} />
           </motion.button>
@@ -696,68 +536,78 @@ export default function AudioPlayer({
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
-              className="absolute bottom-full right-0 mb-2 glass-card border border-white/10 rounded-lg shadow-xl p-3 w-64 max-h-80 overflow-y-auto z-50 origin-bottom-right"
+              className="absolute bottom-full right-0 mb-2 rounded-xl p-3 w-64 max-h-80 overflow-y-auto z-50 origin-bottom-right"
+              style={{
+                background: '#111111',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+              }}
             >
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-white font-semibold text-sm flex items-center gap-2">
                   <History size={16} /> Available Voices
                 </h3>
-                {/* Connection status indicator */}
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  connectionStatus === 'sse'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : connectionStatus === 'polling'
-                    ? 'bg-amber-500/20 text-amber-400'
-                    : 'bg-gray-500/20 text-gray-400'
-                }`} title={connectionStatus === 'sse' ? 'Live updates' : connectionStatus === 'polling' ? 'Polling mode' : 'Disconnected'}>
+                <span className={`text-xs px-2 py-0.5 rounded-lg ${connectionStatus === 'sse'
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : connectionStatus === 'polling'
+                    ? 'bg-amber-500/10 text-amber-400'
+                    : 'bg-neutral-800 text-neutral-500'
+                  }`}>
                   {connectionStatus === 'sse' ? '● Live' : connectionStatus === 'polling' ? '○ Polling' : '○ Offline'}
                 </span>
               </div>
               <div className="space-y-2">
                 {loadingVoices ? (
-                  <div className="flex items-center justify-center py-4 text-gray-400">
+                  <div className="flex items-center justify-center py-8 text-neutral-400">
                     <Loader2 className="animate-spin mr-2" size={20} /> Loading Voices...
                   </div>
                 ) : voices.length > 0 ? (
-                  voices.map((voice) => (
-                    <motion.button
-                      key={voice.id}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleVoiceSelect(voice.id, voice.status)}
-                      disabled={processingVoice === voice.id}
-                      className={`w-full px-3 py-2 rounded-lg text-sm flex justify-between items-center transition-colors duration-200 ${processingVoice === voice.id 
-                          ? 'bg-gray-700 text-gray-400 cursor-wait opacity-60'
-                          : voice.status === 'not started'
-                          ? 'bg-white/5 text-gray-300 hover:bg-white/10 cursor-pointer'
-                          : selectedVoice === voice.id
-                          ? 'bg-primary text-white font-semibold shadow-sm'
-                          : 'bg-white/5 text-gray-300 hover:bg-white/10'}`}
-                      title={voice.status === 'not started' ? 'Click to start processing this voice' : ''}
-                    >
-                      <span>{voice.name}</span>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${selectedVoice === voice.id && voice.status !== 'not started' ? 'bg-white/20 text-white' : getStatusBg(voice.status) + ' ' + getStatusColor(voice.status)}`}>
-                        {processingVoice === voice.id ? 'Processing...' : voice.status}
-                      </span>
-                    </motion.button>
-                  ))
+                  <div className="space-y-2">
+                    {voices.map((voice, index) => (
+                      <motion.button
+                        key={voice.id}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.05 }}
+                        whileHover={{ scale: 1.02, backgroundColor: selectedVoice === voice.id ? 'white' : 'rgba(255, 255, 255, 0.08)' }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => handleVoiceSelect(voice.id, voice.status)}
+                        disabled={processingVoice === voice.id}
+                        className={`w-full px-3 py-2.5 rounded-lg text-sm flex justify-between items-center transition-all duration-200 ${processingVoice === voice.id
+                            ? 'bg-neutral-800 text-neutral-500 cursor-wait opacity-60'
+                            : voice.status === 'not started'
+                              ? 'bg-white/[0.04] text-neutral-300 hover:text-white cursor-pointer border border-white/[0.05]'
+                              : selectedVoice === voice.id
+                                ? 'bg-white text-black font-bold shadow-[0_0_20px_rgba(255,255,255,0.15)]'
+                                : 'bg-white/[0.04] text-neutral-300 hover:text-white border border-white/[0.05]'
+                          }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${selectedVoice === voice.id ? 'bg-black' : 'bg-white/20'}`} />
+                          {voice.name}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-tighter ${selectedVoice === voice.id && voice.status !== 'not started'
+                            ? 'bg-black/10 text-black'
+                            : getStatusBg(voice.status) + ' ' + getStatusColor(voice.status)
+                          }`}>
+                          {processingVoice === voice.id ? 'Processing...' : voice.status}
+                        </span>
+                      </motion.button>
+                    ))}
+                  </div>
                 ) : (
-                  <p className="text-gray-400 text-sm text-center py-4">No voices available.</p>
+                  <p className="text-neutral-500 text-sm text-center py-4">No voices available.</p>
                 )}
               </div>
             </motion.div>
           )}
         </div>
-
       </div>
 
       {/* Notes Modal */}
       <NotesModal
         isOpen={showNotesModal}
-        onClose={() => {
-          setShowNotesModal(false);
-          setEditingNote(null);
-        }}
+        onClose={() => { setShowNotesModal(false); setEditingNote(null); }}
         currentTime={currentTime}
         subtitle={currentSubtitle}
         onSaveNote={handleSaveNote}
@@ -772,7 +622,12 @@ export default function AudioPlayer({
           animate={{ x: 0 }}
           exit={{ x: "100%" }}
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          className="fixed bottom-0 right-0 w-96 h-full bg-background/90 backdrop-blur-md border-l border-white/10 shadow-2xl p-4 z-40 flex flex-col pt-20"
+          className="fixed bottom-0 right-0 w-96 h-full p-4 z-40 flex flex-col pt-20"
+          style={{
+            background: 'rgba(10, 10, 10, 0.95)',
+            backdropFilter: 'blur(12px)',
+            borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+          }}
         >
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -780,7 +635,7 @@ export default function AudioPlayer({
             </h3>
             <button
               onClick={() => setShowNotesSidebar(false)}
-              className="text-gray-400 hover:text-white transition-colors p-1 rounded-full"
+              className="text-neutral-500 hover:text-white transition-colors p-1 rounded-lg"
             >
               <X size={20} />
             </button>
@@ -804,35 +659,32 @@ export default function AudioPlayer({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-background/60 z-50 flex justify-center items-center backdrop-blur-sm px-4"
+          className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center backdrop-blur-sm px-4"
         >
           <motion.div
             initial={{ scale: 0.9, y: 50 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, y: 50 }}
             transition={{ type: "spring", damping: 20, stiffness: 300 }}
-            className="glass-card rounded-2xl p-8 shadow-2xl w-full max-w-sm relative border border-white/10"
+            className="rounded-xl p-8 w-full max-w-sm relative"
+            style={{
+              background: '#111111',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              boxShadow: '0 16px 48px rgba(0, 0, 0, 0.5)',
+            }}
           >
             <div className="flex flex-col items-center">
-              {modalType === 'info' && (
-                <div className="text-5xl mb-4">⏳</div>
-              )}
-              {modalType === 'success' && (
-                <div className="text-5xl mb-4">✅</div>
-              )}
-              {modalType === 'error' && (
-                <div className="text-5xl mb-4">❌</div>
-              )}
-              
+              {modalType === 'info' && <div className="text-5xl mb-4">⏳</div>}
+              {modalType === 'success' && <div className="text-5xl mb-4">✅</div>}
+              {modalType === 'error' && <div className="text-5xl mb-4">❌</div>}
               <p className={`text-center text-lg font-semibold mb-6 ${modalType === 'error' ? 'text-red-400' : modalType === 'success' ? 'text-emerald-400' : 'text-white'}`}>
                 {modalMessage}
               </p>
-              
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setShowModal(false)}
-                className="px-6 py-2 bg-primary text-white rounded-full hover:bg-primary-dark font-semibold transition-colors shadow-md"
+                className="px-6 py-2 bg-white text-black rounded-lg font-semibold hover:opacity-90 transition-opacity"
               >
                 Got it
               </motion.button>
@@ -840,7 +692,6 @@ export default function AudioPlayer({
           </motion.div>
         </motion.div>
       )}
-
     </motion.div>
   );
 }
