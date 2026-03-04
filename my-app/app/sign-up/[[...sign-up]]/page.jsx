@@ -11,7 +11,7 @@ export default function Page() {
             href="/"
             className="text-3xl font-bold text-white"
           >
-            WikiVoice
+            Aven Reader
           </Link>
         </div>
         <p className="text-neutral-500 text-sm">Join thousands of users creating AI audiobooks</p>

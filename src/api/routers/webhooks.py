@@ -346,7 +346,7 @@ def handle_user_deleted(user_data: Dict[str, Any], db: Session):
 
     # Soft delete user - anonymize
     user.deleted_at = datetime.now(timezone.utc)
-    user.email = f"deleted_{clerk_user_id[:8]}@wikivoice.local"
+    user.email = f"deleted_{clerk_user_id[:8]}@avenreader.local"
     user.username = f"deleted_{clerk_user_id[:8]}"
 
     db.commit()

@@ -282,6 +282,7 @@ export default function DashboardPage() {
                     title={nb.title}
                     voice={nb.voice}
                     status={nb.status}
+                    createdAt={nb.created_at}
                     notesCount={nb.notesCount}
                     userId={nb.user_id}
                     jobId={nb.job_id}
@@ -313,6 +314,7 @@ export default function DashboardPage() {
         <AudioPlayer
           title={currentNotebook.title}
           manifestUrl={currentNotebook.manifestUrl}
+          voice={currentNotebook.voice}
           userId={userId}
           jobId={currentNotebook.job_id}
           getToken={getToken}

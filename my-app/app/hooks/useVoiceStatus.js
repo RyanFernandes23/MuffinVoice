@@ -122,6 +122,14 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
       );
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+            console.warn(`[useVoiceStatus] SSE Auth error ${response.status}, retrying with fresh token...`);
+            reconnectAttemptsRef.current++;
+            // Let the catch block handle the retry timeout
+            throw new Error('AUTH_ERROR');
+          }
+        }
         throw new Error(`SSE connection failed: ${response.status}`);
       }
 
@@ -200,10 +208,19 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
       readStream();
 
     } catch (error) {
+      if (error.message === 'AUTH_ERROR') {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 10000);
+        console.log(`SSE auth retry in ${delay}ms`);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectSSE();
+        }, delay);
+        return;
+      }
+
       console.error('Failed to connect SSE:', error);
       setLoadingVoices(false);
 
-      // Fall back to polling
+      // Fall back to polling for other errors
       startPolling();
     }
   }, [userId, jobId, getToken, enabled, handleVoiceData, startPolling]);
@@ -216,8 +233,8 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
       return;
     }
 
-    // Try SSE first
-    connectSSE();
+    // Use polling by default
+    startPolling();
 
     // Cleanup
     return () => {

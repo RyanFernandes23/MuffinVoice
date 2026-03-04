@@ -1,8 +1,10 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useCallback } from 'react';
-import { Play, Headphones, Trash2, StickyNote, ExternalLink, Loader2, CheckCircle2, Clock } from 'lucide-react';
+import { useCallback, useMemo } from 'react';
+import { Play, Headphones, Trash2, StickyNote, ExternalLink, Loader2, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+
+const STALE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 const voiceNames = {
   af_bella: 'Bella',
@@ -17,6 +19,7 @@ export default function NotebookCard({
   title,
   voice,
   status,
+  createdAt,
   notesCount = 0,
   userId,
   jobId,
@@ -25,8 +28,27 @@ export default function NotebookCard({
   onOpen,
   onDelete,
 }) {
-  const isCompleted = status === 'completed';
-  const isProcessing = status === 'processing' || status === 'queued';
+  // Detect stale notebooks stuck in processing/queued for >10 minutes
+  const isStale = useMemo(() => {
+    if (status !== 'processing' && status !== 'queued') return false;
+    if (!createdAt) return false;
+
+    // Ensure the date string is treated as UTC if it doesn't already specify a timezone.
+    const dateString = (createdAt.endsWith('Z') || createdAt.includes('+') || createdAt.includes('-') && createdAt.indexOf('T') > 0 && createdAt.split('T')[1].includes('-'))
+      ? createdAt
+      : `${createdAt}Z`;
+
+    const createdTime = new Date(dateString).getTime();
+    return Date.now() - createdTime > STALE_TIMEOUT_MS;
+  }, [status, createdAt]);
+
+  // Override status for stale notebooks
+  const effectiveStatus = isStale ? 'timed_out' : status;
+
+  const isCompleted = effectiveStatus === 'completed';
+  const isProcessing = effectiveStatus === 'processing' || effectiveStatus === 'queued';
+  const isTimedOut = effectiveStatus === 'timed_out';
+  const isFailed = effectiveStatus === 'failed' || isTimedOut;
 
   const statusConfig = {
     completed: {
@@ -48,10 +70,15 @@ export default function NotebookCard({
       icon: <span className="text-xs">✕</span>,
       label: 'Failed',
       style: 'bg-red-500/10 text-red-400 border-red-500/20'
+    },
+    timed_out: {
+      icon: <AlertTriangle className="w-3.5 h-3.5" />,
+      label: 'Timed Out',
+      style: 'bg-red-500/10 text-red-400 border-red-500/20'
     }
   };
 
-  const currentStatus = statusConfig[status] || statusConfig.queued;
+  const currentStatus = statusConfig[effectiveStatus] || statusConfig.queued;
 
   return (
     <div
@@ -110,6 +137,14 @@ export default function NotebookCard({
           >
             <Play className="w-3.5 h-3.5" />
             Play
+          </button>
+        ) : isFailed ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all border border-red-500/20"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
           </button>
         ) : (
           <div className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-neutral-800 text-neutral-500 cursor-not-allowed border border-white/[0.06]">

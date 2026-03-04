@@ -26,4 +26,6 @@ async def get_usage(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get usage: {str(e)}")
+        import traceback
+        traceback.print_exc() # Log to backend console, but don't leak to frontend
+        raise HTTPException(status_code=500, detail="Failed to get usage: internal database error.")

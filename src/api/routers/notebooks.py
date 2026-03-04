@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
@@ -29,6 +30,7 @@ from src.api.deps import (
     logger,
 )
 from src.api.schema import Note, Notebook
+from src.api.token_utils import refund_tokens
 from src.api.utils import (
     calculate_text_tokens,
     check_token_availability,
@@ -46,6 +48,8 @@ from src.TTS_Workers.tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(prefix="/api", tags=["notebooks", "tts", "s3"])
+
+STALE_JOB_TIMEOUT_MINUTES = 10
 
 
 @notebooks_router.post("/upload_file")
@@ -694,7 +698,6 @@ async def process_voice(
     user_id: str,
     job_id: str,
     voice: str,
-    background_tasks: BackgroundTasks,
     token_payload=Depends(clerk_auth),
     session: Session = Depends(get_session),
 ):
@@ -737,7 +740,7 @@ async def process_voice(
             )
 
         # Queue the voice processing task
-        background_tasks.add_task(process_speeches, user_id, job_id, voice)
+        process_speeches.send(user_id, job_id, voice)
 
         logger.info(
             f"Queued voice processing for user {user_id}, job {job_id}, voice {voice}"
@@ -835,11 +838,11 @@ async def voice_status_stream(
             channel = f"voice_status:{job_id}"
             pubsub.subscribe(channel)
 
-            # Send initial status immediately
-            initial_status = await get_all_voices_status(user_id, job_id)
-            yield f"data: {json.dumps(initial_status)}\n\n"
+            # Get initial status
+            state = await get_all_voices_status(user_id, job_id)
+            yield f"data: {json.dumps(state)}\n\n"
 
-            # Listen for updates with timeout
+            # Listen for updates
             while True:
                 try:
                     # Wait for message with 30 second timeout (heartbeat)
@@ -848,29 +851,44 @@ async def voice_status_stream(
                     )
 
                     if message and message["type"] == "message":
-                        # Parse the voice status update
                         try:
                             update_data = json.loads(message["data"])
-                            # Get fresh full status after update
-                            full_status = await get_all_voices_status(user_id, job_id)
-                            yield f"data: {json.dumps(full_status)}\n\n"
-                        except json.JSONDecodeError:
-                            logger.warning(
-                                f"Invalid JSON in voice status message: {message['data']}"
-                            )
+                            updated_voice = update_data.get("voice")
+                            new_status = update_data.get("status")
+                            
+                            if updated_voice and new_status:
+                                # Explicitly update our local state copy to bypass S3 delays
+                                voice_found = False
+                                for v in state.get("voices", []):
+                                    if v.get("name") == updated_voice:
+                                        v["status"] = new_status
+                                        voice_found = True
+                                        break
+                                if not voice_found:
+                                    state.setdefault("voices", []).append({"name": updated_voice, "status": new_status})
+                                
+                                # Also update job status if it's in the payload or re-fetch it
+                                job_data = get_job_status(job_id)
+                                state["job_status"] = (
+                                    job_data.get(b"status", b"unknown").decode("utf-8")
+                                    if isinstance(job_data, dict) else "unknown"
+                                )
+                                    
+                            yield f"data: {json.dumps(state)}\n\n"
+                        except Exception as e:
+                            logger.error(f"Error processing voice status message: {e}")
+                            # Fallback: re-fetch everything
+                            state = await get_all_voices_status(user_id, job_id)
+                            yield f"data: {json.dumps(state)}\n\n"
 
                 except asyncio.TimeoutError:
-                    # Send heartbeat to keep connection alive
                     yield ":heartbeat\n\n"
 
         except asyncio.CancelledError:
-            logger.info(f"SSE connection cancelled for job {job_id}")
             raise
         except Exception as e:
             logger.error(f"SSE error for job {job_id}: {e}")
-            # Send error event before closing
-            error_data = {"error": "Stream error", "message": str(e)}
-            yield f"data: {json.dumps(error_data)}\n\n"
+            yield f"data: {json.dumps({'error': 'Stream error', 'message': str(e)})}\n\n"
         finally:
             if pubsub:
                 pubsub.unsubscribe()
@@ -951,8 +969,6 @@ async def notebook_status_stream(user_id: str, token_payload=Depends(clerk_auth)
 
             # Track active job IDs
             active_job_ids = {nb["job_id"] for nb in active_notebooks}
-            consecutive_empty_polls = 0
-            max_empty_polls = 2  # Check twice before closing
 
             # Listen for updates
             while True:
@@ -962,70 +978,54 @@ async def notebook_status_stream(user_id: str, token_payload=Depends(clerk_auth)
                         asyncio.to_thread(pubsub.get_message, timeout=1.0), timeout=30.0
                     )
 
-                    if message and message["type"] == "message":
-                        # A status update was published, refresh active list
-                        active_notebooks = await get_active_notebooks(user_id)
-
-                        # Update tracking
-                        new_active_ids = {nb["job_id"] for nb in active_notebooks}
-
-                        # Check if any jobs transitioned from active to complete/failed
-                        completed_jobs = active_job_ids - new_active_ids
-
-                        if completed_jobs:
-                            # Send update with the completed job info
-                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
-
-                            # Update tracking set
-                            active_job_ids = new_active_ids
-
-                            # Check if all complete
-                            if not active_job_ids:
-                                consecutive_empty_polls += 1
-                                if consecutive_empty_polls >= max_empty_polls:
-                                    # Verify once more before closing
-                                    final_check = await get_active_notebooks(user_id)
-                                    if not final_check:
-                                        yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
-                                        break
-                                    else:
-                                        # Race condition - new active jobs appeared
-                                        active_job_ids = {
-                                            nb["job_id"] for nb in final_check
-                                        }
-                                        consecutive_empty_polls = 0
-                                else:
-                                    # First empty poll, wait for next message to confirm
-                                    pass
-                            else:
-                                consecutive_empty_polls = 0
-                        else:
-                            # No change in active set, but send update anyway (could be new queued job)
-                            if new_active_ids - active_job_ids:
-                                # New jobs added
-                                active_job_ids = new_active_ids
-                                yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
-                                consecutive_empty_polls = 0
-
+                    # Triggered by message OR periodically re-checking for safety
+                    should_refresh = (message and message["type"] == "message")
+                    
                 except asyncio.TimeoutError:
-                    # Send heartbeat to keep connection alive
                     yield ":heartbeat\n\n"
+                    should_refresh = True
 
-                    # Periodic check - query database to catch any missed updates
-                    active_notebooks = await get_active_notebooks(user_id)
-
-                    new_active_ids = {nb["job_id"] for nb in active_notebooks}
-
-                    # If status changed, send update
-                    if new_active_ids != active_job_ids:
-                        active_job_ids = new_active_ids
-                        if active_job_ids:
-                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': active_notebooks})}\n\n"
-                        else:
-                            consecutive_empty_polls += 1
-                            if consecutive_empty_polls >= max_empty_polls:
-                                yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
-                                break
+                if should_refresh:
+                    # Get fresh status. Important: also fetch just-completed jobs 
+                    # so the frontend can transition them to "Ready".
+                    current_active = await get_active_notebooks(user_id)
+                    current_active_ids = {nb["job_id"] for nb in current_active}
+                    
+                    # Jobs that were active but are now gone (completed or failed)
+                    finished_job_ids = active_job_ids - current_active_ids
+                    
+                    if finished_job_ids:
+                        # Fetch the final state of these finished jobs
+                        with Session(engine) as session:
+                            finished_notebooks = session.exec(
+                                select(Notebook).where(
+                                    Notebook.user_id == user_id,
+                                    Notebook.job_id.in_(list(finished_job_ids))
+                                )
+                            ).all()
+                            
+                            finished_data = [
+                                {
+                                    "job_id": nb.job_id, "title": nb.title, "voice": nb.voice,
+                                    "status": nb.status, "tokens_used": nb.tokens_used,
+                                    "created_at": nb.created_at.isoformat() if nb.created_at else None,
+                                } for nb in finished_notebooks
+                            ]
+                            
+                            # Send the update containing both new active and newly finished jobs
+                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': current_active + finished_data})}\n\n"
+                            
+                        # Update tracking
+                        active_job_ids = current_active_ids
+                        
+                        # If zero active jobs remain, send final all_complete and close
+                        if not active_job_ids:
+                            yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
+                            break
+                    elif current_active_ids != active_job_ids:
+                        # New jobs appeared
+                        active_job_ids = current_active_ids
+                        yield f"data: {json.dumps({'type': 'status_update', 'notebooks': current_active})}\n\n"
 
         except asyncio.CancelledError:
             logger.info(f"Notebook SSE connection cancelled for user {user_id}")
@@ -1048,3 +1048,107 @@ async def notebook_status_stream(user_id: str, token_payload=Depends(clerk_auth)
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@notebooks_router.post("/cleanup_stale_jobs")
+async def cleanup_stale_jobs(
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session),
+):
+    """
+    Detects and cleans up notebooks stuck in 'processing' or 'queued'
+    for more than STALE_JOB_TIMEOUT_MINUTES. Refunds tokens, deletes
+    S3 objects, Redis keys, notes, and DB rows.
+
+    Called automatically by the frontend on page load (self-healing),
+    or manually for admin cleanup.
+    """
+    user_id = token_payload.decoded.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user ID")
+
+    cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=STALE_JOB_TIMEOUT_MINUTES)
+
+    # Find stale notebooks for this user
+    statement = select(Notebook).where(
+        Notebook.user_id == user_id,
+        Notebook.status.in_(["processing", "queued"]),
+        Notebook.created_at < cutoff_time,
+    )
+    stale_notebooks = session.exec(statement).all()
+
+    if not stale_notebooks:
+        return {"cleaned": 0, "jobs": []}
+
+    cleaned_jobs = []
+    s3 = get_s3_client()
+
+    for notebook in stale_notebooks:
+        job_id = notebook.job_id
+        try:
+            # 1. Refund tokens
+            if notebook.tokens_requested and notebook.tokens_requested > 0:
+                try:
+                    refund_tokens(
+                        session=session,
+                        user_id=user_id,
+                        amount=notebook.tokens_requested,
+                        notebook_id=job_id,
+                    )
+                    logger.info(
+                        f"[CLEANUP] Refunded {notebook.tokens_requested} tokens for stale job {job_id}"
+                    )
+                except Exception as e:
+                    logger.error(f"[CLEANUP] Token refund failed for {job_id}: {e}")
+
+            # 2. Delete S3 objects
+            s3_prefix = f"{user_id}/{job_id}/"
+            try:
+                response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
+                if "Contents" in response:
+                    objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
+                    s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
+                    logger.info(f"[CLEANUP] Deleted {len(objects_to_delete)} S3 objects for {job_id}")
+            except Exception as e:
+                logger.error(f"[CLEANUP] S3 cleanup failed for {job_id}: {e}")
+
+            # 3. Delete Redis key
+            try:
+                redis_client.delete(f"job:{job_id}")
+            except Exception as e:
+                logger.error(f"[CLEANUP] Redis cleanup failed for {job_id}: {e}")
+
+            # 4. Delete associated notes
+            try:
+                from sqlmodel import delete as sql_delete
+                session.execute(sql_delete(Note).where(Note.job_id == job_id))
+            except Exception as e:
+                logger.error(f"[CLEANUP] Note deletion failed for {job_id}: {e}")
+
+            # 5. Delete notebook from DB
+            session.delete(notebook)
+
+            cleaned_jobs.append({
+                "job_id": job_id,
+                "title": notebook.title,
+                "tokens_refunded": notebook.tokens_requested,
+            })
+
+            logger.info(f"[CLEANUP] Cleaned stale job {job_id} (title: {notebook.title})")
+
+        except Exception as e:
+            logger.error(f"[CLEANUP] Failed to clean job {job_id}: {e}")
+
+    session.commit()
+
+    # Publish SSE notification so frontend updates
+    try:
+        from src.api.utils import publish_notebook_status
+        for job in cleaned_jobs:
+            publish_notebook_status(user_id, job["job_id"], "failed")
+    except Exception as e:
+        logger.warning(f"[CLEANUP] Failed to publish SSE notifications: {e}")
+
+    logger.info(f"[CLEANUP] Cleaned {len(cleaned_jobs)} stale jobs for user {user_id}")
+
+    return {"cleaned": len(cleaned_jobs), "jobs": cleaned_jobs}

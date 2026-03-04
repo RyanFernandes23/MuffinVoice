@@ -1,5 +1,5 @@
 """
-Webpage text extraction module for WikiVoice.
+Webpage text extraction module for Aven Reader.
 Supports extracting text from URLs using various methods:
 - Static HTML extraction using trafilatura (fast, for most sites)
 - Headless browser extraction using playwright (for JavaScript-rendered content)

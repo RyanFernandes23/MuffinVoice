@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Circle, Crown, Star, Check } from 'lucide-react';
+import { Circle, Crown, Star, Check, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useUser, useAuth } from "@clerk/nextjs";
 import { useRegion } from "../hooks/useRegion";
@@ -169,7 +169,7 @@ export default function PricingPage() {
     {
       id: "creator",
       name: "Creator",
-      icon: Crown,
+      icon: Zap,
       price: `${symbol}${PRICING_CONFIG[currency]?.creator || "5"}`,
       period: "/month",
       fileSize: "100MB",
@@ -189,7 +189,7 @@ export default function PricingPage() {
     {
       id: "professional",
       name: "Professional",
-      icon: Star,
+      icon: Crown,
       price: `${symbol}${PRICING_CONFIG[currency]?.professional || "12"}`,
       period: "/month",
       fileSize: "150MB",
@@ -272,7 +272,7 @@ export default function PricingPage() {
       const options = {
         key: key_id,
         subscription_id: razorpay_subscription_id,
-        name: 'WikiVoice',
+        name: 'Aven Reader',
         description: `${planName} Plan Subscription`,
         amount: amountInPaise,
         currency: serverCurrency,
@@ -314,7 +314,7 @@ export default function PricingPage() {
               animate={{ opacity: 1, y: 0 }}
               className="text-4xl sm:text-5xl font-bold text-white mb-4 tracking-tight"
             >
-              Fair Pricing, Infinite Listening
+              Fair Pricing for Great Listeners
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: -10 }}
@@ -352,7 +352,7 @@ export default function PricingPage() {
           >
             <p className="text-neutral-500">
               Have questions?{' '}
-              <a href="mailto:support@wikivoice.com" className="text-white hover:opacity-80 transition-opacity">
+              <a href="mailto:support@avenreader.com" className="text-white hover:opacity-80 transition-opacity">
                 Contact our team
               </a>
             </p>

@@ -40,7 +40,12 @@ logger = logging.getLogger(__name__)
 database_url = os.getenv("DATABASE_URL")
 if not database_url:
     raise ValueError("DATABASE_URL environment variable is required")
-engine = create_engine(database_url, echo=False)
+engine = create_engine(
+    database_url, 
+    echo=False, 
+    pool_pre_ping=True, 
+    pool_recycle=1800
+)
 
 
 def sanitize_display_filename(filename: str) -> str:
@@ -192,12 +197,19 @@ def process_file_task(user_id, job_id, file_path, voice):
             if isinstance(chunk, list):
                 chunk = " ".join(str(item) for item in chunk)
 
-            cleaned_chunk1 = cleaner1(chunk, abbrevate=False)
-            c1_chunks.append(cleaned_chunk1)
+            if not chunk or not chunk.strip():
+                continue
 
-            cleaned_chunk1 = cleaner1(chunk, abbrevate=True)
-            cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1)
-            c2_chunks.append(cleaned_chunk2)
+            cleaned_chunk1 = cleaner1(chunk, abbrevate=False)
+            
+            # Use a separate cleaning path for TTS to avoid modifying the display text
+            cleaned_chunk1_for_tts = cleaner1(chunk, abbrevate=True)
+            cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1_for_tts)
+
+            # Only add chunks that contain actual text to be spoken or displayed
+            if cleaned_chunk1.strip() or cleaned_chunk2.strip():
+                c1_chunks.append(cleaned_chunk1)
+                c2_chunks.append(cleaned_chunk2)
 
         logging.info(f"extraction and chunking completed")
 

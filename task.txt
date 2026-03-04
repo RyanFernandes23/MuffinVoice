@@ -34,8 +34,8 @@ ngrok config:
 
 
 
-
-npm run dev
+npx ngrok http 8000
+cd my-app && npm run dev
 
 dramatiq src.TTS_Workers.tasks
 

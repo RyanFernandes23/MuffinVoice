@@ -29,27 +29,40 @@ export function useNotebookStatus(userId, getToken) {
   const POLLING_INTERVAL = 5000; // 5 seconds
 
   /**
-   * Fetch all notebooks via polling (fallback)
+   * Fetch all notebooks with retry logic for auth race conditions
    */
-  const fetchAllNotebooks = useCallback(async () => {
+  const fetchAllNotebooks = useCallback(async (attempts = 3) => {
     if (!userId || !getToken) return [];
 
-    try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/notebooks`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const token = await getToken();
+        const response = await fetch(`${API_BASE_URL}/api/notebooks`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        return data;
+        if (response.ok) {
+          const data = await response.json();
+          return data;
+        }
+
+        if ((response.status === 401 || response.status === 403) && i < attempts - 1) {
+          console.log(`Fetch failed (${response.status}), retrying... attempt ${i + 1}/${attempts}`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Incremental backoff
+          continue;
+        }
+
+        return [];
+      } catch (error) {
+        console.error('Error fetching notebooks:', error);
+        if (i < attempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+          continue;
+        }
+        return [];
       }
-      return [];
-    } catch (error) {
-      console.error('Error fetching notebooks:', error);
-      return [];
     }
   }, [userId, getToken]);
 
@@ -74,23 +87,39 @@ export function useNotebookStatus(userId, getToken) {
     // Initial fetch
     const allNotebooks = await fetchAllNotebooks();
     setNotebooks(allNotebooks);
-    
+
     const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
     setActiveNotebooks(active);
+
+    if (active.length === 0) {
+      setConnectionStatus('disconnected');
+      return;
+    }
 
     // Start polling interval
     pollingIntervalRef.current = setInterval(async () => {
       if (!isMountedRef.current) return;
 
-      const allNotebooks = await fetchAllNotebooks();
-      setNotebooks(allNotebooks);
-      
-      const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
-      setActiveNotebooks(active);
+      const currentNotebooks = await fetchAllNotebooks();
+      setNotebooks(currentNotebooks);
+
+      const currentActive = currentNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
+      setActiveNotebooks(currentActive);
+
+      if (currentActive.length === 0) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        setConnectionStatus('disconnected');
+        return;
+      }
 
       // If active notebooks detected, try to switch to SSE
-      if (hasActiveNotebooks(allNotebooks) && connectionStatus === 'polling') {
-        connectSSE();
+      if (hasActiveNotebooks(currentNotebooks)) {
+        // Just let it continue polling as fallback or wait it out. 
+        // Previously it called connectSSE() but that causes dependency cycles and stale closures.
+        // It's safer to just poll until complete since startPolling is the fallback anyway.
       }
     }, POLLING_INTERVAL);
   }, [fetchAllNotebooks, hasActiveNotebooks]);
@@ -139,7 +168,7 @@ export function useNotebookStatus(userId, getToken) {
 
       // Read stream
       let buffer = '';
-      
+
       while (isMountedRef.current) {
         const { done, value } = await reader.read();
 
@@ -180,14 +209,14 @@ export function useNotebookStatus(userId, getToken) {
                   break;
 
                 case 'all_complete':
-                  // All notebooks complete, close SSE and return to polling
+                  // All notebooks complete, close SSE and stop polling
                   setActiveNotebooks([]);
                   // Fetch full list to get completed notebooks
                   const allNotebooks = await fetchAllNotebooks();
                   setNotebooks(allNotebooks);
-                  // Close connection and return to polling
+                  // Close connection and set status to disconnected
                   reader.cancel();
-                  setConnectionStatus('polling');
+                  setConnectionStatus('disconnected');
                   return;
 
                 default:
@@ -215,10 +244,9 @@ export function useNotebookStatus(userId, getToken) {
    * Manual refresh function
    */
   const refresh = useCallback(async () => {
-    setLoading(true);
-    const allNotebooks = await fetchAllNotebooks();
+    const allNotebooks = await fetchAllNotebooks(3);
     setNotebooks(allNotebooks);
-    
+
     const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
     setActiveNotebooks(active);
     setLoading(false);
@@ -235,26 +263,48 @@ export function useNotebookStatus(userId, getToken) {
   useEffect(() => {
     isMountedRef.current = true;
 
-    if (!userId || !getToken) {
-      setConnectionStatus('disconnected');
-      setLoading(false);
+    if (!userId) {
+      // Don't set disconnected yet, auth might just be loading
       return;
     }
 
     const init = async () => {
-      // Initial fetch to get all notebooks
-      const allNotebooks = await fetchAllNotebooks();
+      // Check and clean up any stale jobs before fetching lists
+      try {
+        const token = await getToken();
+        const response = await fetch(`${API_BASE_URL}/api/cleanup_stale_jobs`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.cleaned > 0) {
+            console.log(`Auto-cleaned ${data.cleaned} stale notebook(s).`);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to auto-clean stale notebooks:', err);
+      }
+
+      // Initial fetch to get all notebooks - this now includes 3 retry attempts
+      const allNotebooks = await fetchAllNotebooks(3);
       setNotebooks(allNotebooks);
-      
+
       const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
       setActiveNotebooks(active);
 
-      // If there are active notebooks, use SSE
+      // We should always clear loading state now that we've tried (and possibly retried)
+      setLoading(false);
+
+      // If there are active notebooks, use Polling
       if (hasActiveNotebooks(allNotebooks)) {
-        connectSSE();
-      } else {
-        // No active notebooks, use polling
         startPolling();
+      } else {
+        // No active notebooks, do not poll
+        setLoading(false);
+        setConnectionStatus('disconnected');
       }
     };
 
@@ -284,7 +334,8 @@ export function useNotebookStatus(userId, getToken) {
         reconnectTimeoutRef.current = null;
       }
     };
-  }, [userId, getToken, connectSSE, startPolling, fetchAllNotebooks, hasActiveNotebooks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, getToken]);
 
   return {
     notebooks,

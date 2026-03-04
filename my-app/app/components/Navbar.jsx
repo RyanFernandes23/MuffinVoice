@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Tag, LayoutDashboard, Menu, X, User, Zap, Crown, Home } from 'lucide-react';
+import { Tag, LayoutDashboard, Menu, X, User, Zap, Crown, Home, Circle } from 'lucide-react';
 import { UpgradeModal } from './modals/UpgradeModal';
 import { useUsage } from '../../hooks/useUsage';
 
@@ -16,7 +16,7 @@ function getPlanBadgeStyle(planName) {
   if (plan.includes('creator')) {
     return { text: 'text-neutral-300', icon: Zap };
   }
-  return { text: 'text-neutral-400', icon: null };
+  return { text: 'text-neutral-400', icon: Circle };
 }
 
 function PlanBadgeSkeleton() {
@@ -68,7 +68,7 @@ export default function Navbar() {
             href="/"
             className="text-lg font-bold text-white hover:opacity-80 transition-opacity duration-300"
           >
-            WikiVoice
+            Aven Reader
           </Link>
         </motion.div>
 

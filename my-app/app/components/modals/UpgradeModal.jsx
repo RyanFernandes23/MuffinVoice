@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Check, Circle, Crown, Star } from "lucide-react";
+import { X, Check, Circle, Crown, Zap } from "lucide-react";
 import Link from "next/link";
 
 const plans = [
@@ -11,12 +11,12 @@ const plans = [
     features: ["50MB max upload", "40K tokens/month", "Basic voices", "Email support"],
   },
   {
-    id: "creator", name: "Creator", icon: Crown,
+    id: "creator", name: "Creator", icon: Zap,
     price: "$5", period: "/month", fileSize: "100MB", tokens: "400K", color: "amber", popular: true,
     features: ["100MB max upload", "400K tokens/month", "All voices", "Audio download", "Priority support"],
   },
   {
-    id: "professional", name: "Professional", icon: Star,
+    id: "professional", name: "Professional", icon: Crown,
     price: "$12", period: "/month", fileSize: "150MB", tokens: "1.6M", color: "purple",
     features: ["150MB max upload", "1.6M tokens/month", "All voices", "Audio download", "24/7 support"],
   },

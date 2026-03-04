@@ -10,7 +10,7 @@ import dramatiq
 import redis
 from boto3.session import Config
 from dotenv import load_dotenv
-from dramatiq import group, pipeline
+from dramatiq import group
 from dramatiq.middleware import GroupCallbacks
 from dramatiq.rate_limits.backends import RedisBackend as RateLimitRedisBackend
 from dramatiq.results import Results
@@ -53,7 +53,12 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-engine = create_engine(os.getenv("DATABASE_URL"), echo=False)
+engine = create_engine(
+    os.getenv("DATABASE_URL"), 
+    echo=False, 
+    pool_pre_ping=True, 
+    pool_recycle=1800
+)
 
 
 # --- DB Update Function ---
@@ -176,27 +181,26 @@ redis_broker.add_middleware(Results(backend=result_backend))
 redis_broker.add_middleware(GroupCallbacks(rate_limiter_backend=rate_limiter_backend))
 dramatiq.set_broker(redis_broker)
 
+_s3_client = None
 
 def get_s3_client():
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.getenv("S3_ENDPOINT_URL"),
-        aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
-        region_name=os.getenv("S3_REGION_NAME"),
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
-    )
-    return s3
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client(
+            "s3",
+            endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+            aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
+            region_name=os.getenv("S3_REGION_NAME"),
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}, retries={"max_attempts": 3}),
+        )
+    return _s3_client
 
-
-def chunks_in_batches(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i : i + n]
 
 
 @dramatiq.actor
 def process_speeches(user_id, job_id, voice):
-    batch_size = 50
+    """Orchestrator: dispatches all TTS chunks in parallel, then finalizes."""
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}"
 
@@ -206,10 +210,17 @@ def process_speeches(user_id, job_id, voice):
         # Publish that voice processing has started
         publish_voice_status(job_id, voice, "processing")
 
+        # Load chunks from S3
         response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
         chunks = json.loads(response["Body"].read().decode("utf-8"))
 
-        # Initialize empty metadata file (we use this to store duration/index for both manifest and subtitles)
+        if not chunks:
+            logging.warning(f"No chunks found for job {job_id}. Marking as failed.")
+            update_job_status(job_id, "failed")
+            publish_voice_status(job_id, voice, "failed")
+            return
+
+        # Initialize empty manifest metadata file
         voice_prefix = f"{s3_prefix}/voices/{voice}"
         s3.put_object(
             Bucket="ttsfiles",
@@ -218,59 +229,35 @@ def process_speeches(user_id, job_id, voice):
             ContentType="application/json",
         )
 
-        current_pipeline = None
-        total_batches = (len(chunks) + batch_size - 1) // batch_size
-
-        for batch_index, batch in enumerate(chunks_in_batches(chunks, batch_size)):
-            logging.info(
-                f"[Batch {batch_index + 1}/{total_batches}] Processing {len(batch)} chunks..."
-            )
-
-            start_index = batch_index * batch_size
-            g = group(
-                process_single_speech.message(
-                    start_index + i, chunk, voice, user_id, job_id
-                )
-                for i, chunk in enumerate(batch)
-            )
-
-            if current_pipeline:
-                current_pipeline = pipeline(current_pipeline, g)
-            else:
-                current_pipeline = g
-
-        if current_pipeline:
-            # Main processing pipeline including finalization
-            main_pipeline = pipeline(
-                current_pipeline, finalize_manifest.message(user_id, job_id, voice)
-            )
-
-            # Define a success callback for the main pipeline
-            main_pipeline.add_completion_callback(
-                complete_job_status.message(job_id, "completed")
-            )
-
-            # Define a failure callback for the main pipeline (if any actor in it fails definitively)
-            main_pipeline.add_failure_callback(
-                complete_job_status.message(job_id, "failed")
-            )
-
-            main_pipeline.run()
+        # Create ONE group with ALL chunk messages (parallel execution)
+        all_messages = [
+            process_single_speech.message(i, chunk, voice, user_id, job_id)
+            for i, chunk in enumerate(chunks)
+        ]
 
         logging.info(
-            f"[TASK] Queued processing pipeline with callbacks for {voice} (job {job_id})"
+            f"[TASK] Dispatching {len(all_messages)} chunks for {voice} (job {job_id})"
+        )
+
+        g = group(all_messages)
+
+        # When ALL chunks finish successfully, run finalize_manifest
+        g.add_completion_callback(
+            finalize_manifest.message(user_id, job_id, voice)
+        )
+
+        g.run()
+
+        logging.info(
+            f"[TASK] Group dispatched for {voice} (job {job_id})"
         )
 
     except Exception as e:
-        # This catch block is for errors occurring *before* the pipeline is run (e.g., S3 read of chunks.json)
-        complete_job_status.send(
-            job_id, "failed"
-        )  # Use the actor to update status consistently
+        update_job_status(job_id, "failed")
+        publish_voice_status(job_id, voice, "failed")
         logging.error(
-            f"process_speeches initial setup failed for job {job_id}: {e}",
-            exc_info=True,
+            f"process_speeches failed for job {job_id}: {e}", exc_info=True
         )
-        raise
 
 
 @dramatiq.actor(store_results=True, max_retries=5, min_backoff=1000)
@@ -289,13 +276,23 @@ def process_single_speech(index, text, voice, user_id, job_id):
         chunk_tokens = calculate_text_tokens(text)
 
         audio_data = b""
-        with tts_generator(text, voice) as speech_output:
-            for data in speech_output.iter_bytes():
-                if data:
-                    audio_data += data
+        if text.strip():
+            with tts_generator(text, voice) as speech_output:
+                for data in speech_output.iter_bytes():
+                    if data:
+                        audio_data += data
 
         # Calculate duration directly from BytesIO
-        duration = MP3(BytesIO(audio_data)).info.length
+        if not audio_data:
+            logging.warning(f"[WARNING] No audio data generated for chunk {index}")
+            return None # Skip this chunk
+
+        try:
+            duration = MP3(BytesIO(audio_data)).info.length
+        except Exception as e:
+            logging.error(f"[ERROR] process_single_speech index={index}: Failed to parse MP3 headers: {e}")
+            # If we can't get duration, we can't safely include it in HLS manifest
+            return None
 
         mp3_key = f"{s3_prefix}/speech{index}.mp3"
         s3.put_object(
@@ -359,7 +356,14 @@ def finalize_manifest(user_id, job_id, voice):
                 f"CRITICAL: {manifest_data_key} not found. Did workers finish?"
             )
             update_job_status(job_id, "failed")
+            publish_voice_status(job_id, voice, "failed")
             return  # Stop here
+
+        if not audio_meta:
+            logging.error(f"CRITICAL: manifest_data.json is empty for job {job_id}.")
+            update_job_status(job_id, "failed")
+            publish_voice_status(job_id, voice, "failed")
+            return
 
         # 2. LOAD CHUNKS (Your structure confirms this file exists)
         try:
@@ -401,7 +405,7 @@ def finalize_manifest(user_id, job_id, voice):
 
         manifest_lines.append("#EXT-X-ENDLIST")
 
-        # 4. UPLOAD SUBTITLES (The missing piece)
+        # 4. UPLOAD SUBTITLES
         sub_key = f"{s3_prefix}/subtitles.json"
         logging.info(f"Uploading subtitles to {sub_key}")
         s3.put_object(
@@ -438,3 +442,4 @@ def finalize_manifest(user_id, job_id, voice):
     except Exception as e:
         logging.error(f"Finalize crashed: {e}", exc_info=True)
         update_job_status(job_id, "failed")
+        publish_voice_status(job_id, voice, "failed")

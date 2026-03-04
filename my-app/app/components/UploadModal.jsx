@@ -95,13 +95,30 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
     if (!file) { setError("Please select a file to upload."); return; }
     setIsUploading(true); setError(null);
     const formData = new FormData(); formData.append('file', file);
+
+    let attempts = 3;
+    let response;
+
     try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/upload_file`, {
-        method: 'POST',
-        headers: { 'voice': selectedVoice, Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      while (attempts > 0) {
+        const token = await getToken();
+        response = await fetch(`${API_BASE_URL}/api/upload_file`, {
+          method: 'POST',
+          headers: { 'voice': selectedVoice, Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        if (response.status === 403) {
+          attempts--;
+          if (attempts > 0) {
+            console.warn(`Upload attempt failed with 403. Retrying... (${attempts} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay before retry
+            continue;
+          }
+        }
+        break;
+      }
+
       if (response.ok) {
         const result = await response.json();
         onUpload(file.name, result.voice, result.job_id); onClose();
@@ -124,12 +141,29 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
   const handleUrlUpload = async () => {
     if (!isUrlValid) { setError("Please enter a valid URL (http:// or https://)."); return; }
     setIsUploading(true); setError(null);
+
+    let attempts = 3;
+    let response;
+
     try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/upload_webpage`, {
-        method: 'POST',
-        headers: { 'url': url, 'voice': selectedVoice, Authorization: `Bearer ${token}` },
-      });
+      while (attempts > 0) {
+        const token = await getToken();
+        response = await fetch(`${API_BASE_URL}/api/upload_webpage`, {
+          method: 'POST',
+          headers: { 'url': url, 'voice': selectedVoice, Authorization: `Bearer ${token}` },
+        });
+
+        if (response.status === 403) {
+          attempts--;
+          if (attempts > 0) {
+            console.warn(`URL process attempt failed with 403. Retrying... (${attempts} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+        }
+        break;
+      }
+
       if (response.ok) { const result = await response.json(); onUpload(result.source_url || url, result.voice, result.job_id); onClose(); }
       else if (response.status === 402) { const errorData = await response.json().catch(() => ({})); setError(errorData.detail || 'Insufficient tokens.'); }
       else if (response.status === 408) { setError('Request timed out.'); }
@@ -143,13 +177,30 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
     if (!textContent.trim()) { setError("Please enter some text."); return; }
     if (exceedsTokens) { setError(`Text exceeds your token balance.`); return; }
     setIsUploading(true); setError(null);
+
+    let attempts = 3;
+    let response;
+
     try {
-      const token = await getToken();
-      const response = await fetch(`${API_BASE_URL}/api/upload_text`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'voice': selectedVoice, Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ text: textContent, title: textTitle.trim() || undefined }),
-      });
+      while (attempts > 0) {
+        const token = await getToken();
+        response = await fetch(`${API_BASE_URL}/api/upload_text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'voice': selectedVoice, Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text: textContent, title: textTitle.trim() || undefined }),
+        });
+
+        if (response.status === 403) {
+          attempts--;
+          if (attempts > 0) {
+            console.warn(`Text process attempt failed with 403. Retrying... (${attempts} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+        }
+        break;
+      }
+
       if (response.ok) { const result = await response.json(); onUpload(result.title, result.voice, result.job_id); onClose(); }
       else if (response.status === 402) { const errorData = await response.json().catch(() => ({})); setError(errorData.detail || 'Insufficient tokens.'); }
       else { const errorData = await response.json().catch(() => ({})); setError(errorData.detail || 'Failed to process text.'); }
@@ -356,8 +407,8 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                               setIsVoiceDropdownOpen(false);
                             }}
                             className={`w-full px-4 py-2.5 text-left text-sm transition-colors flex items-center justify-between ${selectedVoice === voice.id
-                                ? 'bg-white text-black font-semibold'
-                                : 'text-neutral-400 hover:bg-white/[0.05] hover:text-white'
+                              ? 'bg-white text-black font-semibold'
+                              : 'text-neutral-400 hover:bg-white/[0.05] hover:text-white'
                               } ${index !== voices.length - 1 ? 'border-b border-white/[0.05]' : ''}`}
                           >
                             <span>{voice.name}</span>
@@ -391,7 +442,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                   {isUploading ? (
                     <>
                       <Loader2 className="animate-spin h-5 w-5" />
-                      {activeTab === 'file' ? 'Uploading...' : activeTab === 'url' ? 'Extracting...' : 'Processing...'}
+                      uploading
                     </>
                   ) : (
                     <>

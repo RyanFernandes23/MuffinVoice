@@ -2,14 +2,14 @@
 
 import { useUser, useAuth } from "@clerk/nextjs";
 import { motion } from "framer-motion";
-import { User, Mail, Shield, Zap, Info, CheckCircle2, Clock, Crown, Sparkles } from "lucide-react";
+import { User, Mail, Shield, Zap, Info, CheckCircle2, Clock, Crown, Sparkles, Circle } from "lucide-react";
 import { useUsage } from "../../hooks/useUsage";
 import Navbar from "../components/Navbar";
 
 const PLAN_DETAILS = {
     explorer: {
         name: "Explorer",
-        description: "Perfect for getting started and exploring WikiVoice features.",
+        description: "Perfect for getting started and exploring Aven Reader features.",
         features: [
             "50MB max file upload",
             "40K tokens per month",
@@ -18,7 +18,7 @@ const PLAN_DETAILS = {
         ],
         accent: "text-neutral-400",
         border: "border-neutral-700",
-        icon: null
+        icon: Circle
     },
     creator: {
         name: "Creator",
@@ -67,7 +67,6 @@ function ProfileSkeleton() {
             <Skeleton className="h-7 w-40 mx-auto mb-2" />
             <Skeleton className="h-4 w-52 mx-auto mb-6" />
             <div className="space-y-3 text-left">
-                <Skeleton className="h-11 w-full rounded-xl" />
                 <Skeleton className="h-11 w-full rounded-xl" />
                 <Skeleton className="h-11 w-full rounded-xl" />
             </div>
@@ -172,14 +171,10 @@ export default function ProfilePage() {
                                     />
                                     <div className="absolute bottom-1 right-1 w-6 h-6 bg-emerald-500 border-4 border-black rounded-lg" />
                                 </div>
-                                <h1 className="text-xl font-bold text-white">{user?.fullName || "WikiVoice User"}</h1>
+                                <h1 className="text-xl font-bold text-white">{user?.fullName || "Aven Reader User"}</h1>
                                 <p className="text-neutral-500 text-sm mb-6">{user?.primaryEmailAddress?.emailAddress}</p>
 
                                 <div className="space-y-3 text-left">
-                                    <div className="flex items-center gap-3 text-sm text-neutral-300 bg-white/[0.04] p-3 rounded-xl border border-white/[0.06]">
-                                        <User className="w-4 h-4 text-neutral-400" />
-                                        <span>{user?.username || "No username"}</span>
-                                    </div>
                                     <div className="flex items-center gap-3 text-sm text-neutral-300 bg-white/[0.04] p-3 rounded-xl border border-white/[0.06]">
                                         <Shield className="w-4 h-4 text-neutral-400" />
                                         <span className="capitalize flex items-center gap-2">

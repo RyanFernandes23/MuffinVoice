@@ -2,127 +2,224 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import {
+  FileText,
+  Globe,
+  Type,
+  BookOpen,
+  Mic2,
+  FileJson,
+  ArrowRight,
+  Sparkles
+} from 'lucide-react';
 
 export default function HomePage() {
+  const features = [
+    {
+      icon: <Mic2 className="w-6 h-6" />,
+      title: 'Natural AI Voices',
+      desc: 'Premium, human-like narration that captures every nuance of your text.',
+      color: 'blue'
+    },
+    {
+      icon: <FileText className="w-6 h-6" />,
+      title: 'PDF Documents',
+      desc: 'Seamlessly convert complex PDF reports and articles into clear audio.',
+      color: 'emerald'
+    },
+    {
+      icon: <BookOpen className="w-6 h-6" />,
+      title: 'EPUB E-books',
+      desc: 'Listen to your favorite digital books while you commute or relax.',
+      color: 'purple'
+    },
+    {
+      icon: <Globe className="w-6 h-6" />,
+      title: 'Web Articles',
+      desc: 'Paste any URL to transform blog posts and news into personal podcasts.',
+      color: 'amber'
+    },
+    {
+      icon: <Type className="w-6 h-6" />,
+      title: 'Direct Text',
+      desc: 'Type or paste content directly for instant high-quality voice conversion.',
+      color: 'rose'
+    },
+    {
+      icon: <FileJson className="w-6 h-6" />,
+      title: 'TXT Files',
+      desc: 'Quickly process simple text documents with lightning-fast AI power.',
+      color: 'slate'
+    }
+  ];
+
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      <main className="grow flex flex-col items-center justify-center p-6 relative">
+    <div className="min-h-screen flex flex-col bg-black text-foreground selection:bg-white/10">
+      <main className="grow flex flex-col items-center justify-center p-6 relative z-10">
         {/* Hero Content */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
-          className="text-center max-w-4xl"
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          className="text-center max-w-4xl mt-12 md:mt-24"
         >
-          {/* Brand */}
           <motion.h1
-            className="text-6xl md:text-8xl font-extrabold text-center mb-6 tracking-tight text-white"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.8, ease: 'easeOut' }}
+            className="text-7xl md:text-9xl font-black text-center mb-8 tracking-tighter text-white"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.8 }}
           >
-            WikiVoice
+            Aven Reader
           </motion.h1>
 
-          {/* Tagline */}
           <motion.p
-            className="text-xl md:text-2xl text-neutral-400 mb-10 text-center max-w-2xl mx-auto leading-relaxed"
+            className="text-xl md:text-2xl text-neutral-500 mb-12 text-center max-w-2xl mx-auto leading-relaxed font-medium"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 0.2, duration: 0.6 }}
+            transition={{ delay: 0.4, duration: 0.8 }}
           >
-            Transform your articles into natural-sounding audio with{' '}
-            <span className="text-white font-semibold">AI-powered</span> text-to-speech technology.
+            Transform your articles into natural sounding audiobooks with{' '}
+            <span className="text-white">AI-powered</span> text-to-speech technology.
           </motion.p>
 
-          {/* CTA Button - Kindwise pill style */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.6 }}
+            transition={{ delay: 0.6, duration: 0.6 }}
           >
             <Link
               href="/dashboard"
-              className="inline-flex items-center gap-3 bg-white text-black px-10 py-4 rounded-lg text-lg font-semibold hover:opacity-90 transition-opacity duration-200"
+              className="group relative inline-flex items-center gap-3 bg-white text-black px-12 py-5 rounded-xl text-lg font-bold hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
               <span>Go to Dashboard</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 7l5 5m0 0l-5 5m5-5H6"
-                />
-              </svg>
+              <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Link>
           </motion.div>
         </motion.div>
 
-        {/* Features Preview */}
-        <motion.div
-          className="mt-20 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl"
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6, duration: 0.8 }}
-        >
-          {[
-            {
-              icon: (
-                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-              ),
-              title: 'Natural Voice',
-              desc: 'AI-generated speech that sounds human and natural'
-            },
-            {
-              icon: (
-                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              ),
-              title: 'Article to Audio',
-              desc: 'Convert any article or document into spoken audio'
-            },
-            {
-              icon: (
-                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-              ),
-              title: 'Easy Download',
-              desc: 'Download your audio files in multiple formats'
-            }
-          ].map((feature, index) => (
+        {/* Experience Section */}
+        <div className="mt-48 w-full max-w-6xl px-4">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="text-center mb-16"
+          >
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">Designed for Every Moment</h2>
+            <p className="text-neutral-500 text-lg max-w-2xl mx-auto">Whether you're finding peace in nature or multitasking at home, Aven Reader turns any text into an immersive companion.</p>
+          </motion.div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 h-auto md:h-[650px]">
+            {/* Main Feature Image - Garden */}
             <motion.div
-              key={index}
-              className="p-6 rounded-xl text-center group cursor-default border border-white/[0.08] hover:border-white/[0.15] transition-all duration-300"
-              style={{ background: '#111111' }}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8 + index * 0.1, duration: 0.5 }}
-              whileHover={{ y: -4, transition: { duration: 0.2 } }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              className="md:col-span-8 relative group rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl shadow-white/5"
             >
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-white/[0.08] text-white mb-4">
-                {feature.icon}
+              <img
+                src="/images/reading_in_garden.png"
+                alt="Reading in a garden"
+                className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent flex flex-col justify-end p-10">
+                <div className="max-w-md">
+                  <h3 className="text-3xl font-bold text-white mb-3 tracking-tight">Moments of Peace</h3>
+                  <p className="text-neutral-400 text-lg leading-relaxed">Lose yourself in stories while enjoying the beauty of nature. Transform any digital book into a serene outdoor experience.</p>
+                </div>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-2">
-                {feature.title}
-              </h3>
-              <p className="text-neutral-500 text-sm">
-                {feature.desc}
-              </p>
+              {/* Lens Flare Effect */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
             </motion.div>
-          ))}
-        </motion.div>
 
+            {/* Side Images Stack */}
+            <div className="md:col-span-4 flex flex-col gap-8">
+              {/* Mother and Child */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                className="flex-1 relative group rounded-[2rem] overflow-hidden border border-white/10"
+              >
+                <img
+                  src="/images/mother_reading_child.png"
+                  alt="Mother reading to child"
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent flex flex-col justify-end p-8">
+                  <h4 className="text-xl font-bold text-white mb-1">Family Connections</h4>
+                  <p className="text-sm text-neutral-400">Share the joy of reading together at home.</p>
+                </div>
+              </motion.div>
 
+              {/* Headphones */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: 0.2 }}
+                className="flex-1 relative group rounded-[2rem] overflow-hidden border border-white/10"
+              >
+                <img
+                  src="/images/listening_headphones.png"
+                  alt="Listening with headphones"
+                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent flex flex-col justify-end p-8">
+                  <h4 className="text-xl font-bold text-white mb-1">Immersive Audio</h4>
+                  <p className="text-sm text-neutral-400">Crystal clear AI-powered narration.</p>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        </div>
+
+        {/* Features Preview */}
+        <div className="mt-32 w-full max-w-6xl px-4 pb-24">
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            className="text-center mb-16"
+          >
+            <h2 className="text-3xl font-bold text-white mb-4">Supported Formats</h2>
+            <p className="text-neutral-500">Everything you need to turn text into immersive audio.</p>
+          </motion.div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {features.map((feature, index) => (
+              <motion.div
+                key={index}
+                className="relative p-8 rounded-2xl border border-white/[0.08] hover:border-white/[0.15] transition-all duration-300 group overflow-hidden"
+                style={{ background: '#0a0a0a' }}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: index * 0.1, duration: 0.5 }}
+                whileHover={{ y: -5 }}
+              >
+                {/* Subtle Hover Glow */}
+                <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl bg-white/[0.05] text-white mb-6 group-hover:scale-110 group-hover:bg-white/10 transition-all duration-300`}>
+                  {feature.icon}
+                </div>
+
+                <h3 className="text-xl font-bold text-white mb-3 tracking-tight">
+                  {feature.title}
+                </h3>
+
+                <p className="text-neutral-500 text-sm leading-relaxed">
+                  {feature.desc}
+                </p>
+
+                {/* Bottom Accent Line */}
+                <div className="absolute bottom-0 left-0 h-[2px] bg-white/20 w-0 group-hover:w-full transition-all duration-500" />
+              </motion.div>
+            ))}
+          </div>
+        </div>
       </main>
     </div>
   );
