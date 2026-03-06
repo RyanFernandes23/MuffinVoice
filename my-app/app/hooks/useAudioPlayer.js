@@ -40,6 +40,11 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
 
     // --- Token refresh --- waits for first token before allowing HLS to attach
     useEffect(() => {
+        if (!getToken) {
+            setTokenReady(true);
+            return;
+        }
+
         let cancelled = false;
         const refresh = async () => {
             try {
@@ -97,11 +102,13 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
 
         const createHls = async () => {
             // Always grab a fresh token before each attempt
-            try {
-                const freshToken = await getToken();
-                tokenRef.current = freshToken;
-            } catch (err) {
-                console.warn('[useAudioPlayer] Token refresh before HLS attach failed:', err);
+            if (getToken) {
+                try {
+                    const freshToken = await getToken();
+                    tokenRef.current = freshToken;
+                } catch (err) {
+                    console.warn('[useAudioPlayer] Token refresh before HLS attach failed:', err);
+                }
             }
 
             if (Hls.isSupported()) {

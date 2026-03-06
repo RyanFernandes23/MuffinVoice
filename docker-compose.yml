@@ -13,7 +13,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d wikivoice"]
+      test: [ "CMD-SHELL", "pg_isready -U admin -d wikivoice" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,6 +29,52 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: wikivoice_api
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+
+  worker_chunker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker-chunker
+    container_name: wikivoice_chunker
+    restart: always
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+
+  worker_tts:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker-tts
+    container_name: wikivoice_tts
+    restart: always
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
 
 volumes:
   postgres_data:

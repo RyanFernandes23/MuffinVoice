@@ -5,11 +5,28 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Mic, X, UploadCloud, Trash2, Globe, Link, Loader2, Type, ChevronDown } from 'lucide-react';
 import { FileTooLargeModal } from './modals/FileTooLargeModal';
 import { useUsage } from '../../hooks/useUsage';
+import { truncateText } from '../utils/textUtils';
 
 const API_BASE_URL = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000')
   : 'http://localhost:8000';
 
+const ADJECTIVES = [
+  'Soggy', 'Drunken', 'Giggly', 'Grumpy', 'Wobbly', 'Hyper', 'Spicy', 'Lazy', 'Sassy', 'Goofy',
+  'Dizzy', 'Clumsy', 'Nifty', 'Snazzy', 'Funky', 'Zesty', 'Loony', 'Cheesy', 'Quirky', 'Beefy'
+];
+
+const NOUNS = [
+  'Waffle', 'Burrito', 'Potato', 'Hammer', 'Chicken', 'Viking', 'Penguin', 'Unicorn', 'Meatball', 'Taco',
+  'Ninja', 'Banana', 'Muffin', 'Pickle', 'Cactus', 'Narwhal', 'Walrus', 'Shrimp', 'Bagel', 'Donut'
+];
+
+const generateRandomName = () => {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = Math.floor(Math.random() * 9000) + 1000;
+  return `${adj}-${noun}-${num}`;
+};
 
 export default function UploadModal({ isOpen, onClose, onUpload, initialText = '' }) {
   const [activeTab, setActiveTab] = useState('file');
@@ -112,7 +129,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
           attempts--;
           if (attempts > 0) {
             console.warn(`Upload attempt failed with 403. Retrying... (${attempts} attempts left)`);
-            await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay before retry
+            await new Promise(resolve => setTimeout(resolve, 500));
             continue;
           }
         }
@@ -184,10 +201,11 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
     try {
       while (attempts > 0) {
         const token = await getToken();
+        const finalTitle = textTitle.trim() || generateRandomName();
         response = await fetch(`${API_BASE_URL}/api/upload_text`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'voice': selectedVoice, Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ text: textContent, title: textTitle.trim() || undefined }),
+          body: JSON.stringify({ text: textContent, title: finalTitle }),
         });
 
         if (response.status === 403) {
@@ -231,7 +249,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 50 }}
               transition={{ type: "spring", damping: 20, stiffness: 300 }}
-              className="rounded-xl p-8 w-full max-w-2xl relative max-h-[90vh] overflow-y-auto"
+              className="rounded-none p-8 w-full max-w-2xl relative max-h-[90vh] overflow-y-auto"
               style={{
                 background: '#111111',
                 border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -240,15 +258,14 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
             >
               <button
                 onClick={onClose}
-                className="absolute top-4 right-4 text-neutral-500 hover:text-white transition-all p-2 rounded-lg hover:bg-white/[0.05] z-10"
+                className="absolute top-4 right-4 text-neutral-500 hover:text-white transition-all p-2 rounded-none hover:bg-white/[0.05] z-10"
               >
                 <X size={24} />
               </button>
 
               <h2 className="text-3xl font-bold mb-6 text-white text-center">Upload Document</h2>
 
-              {/* Tab Navigation */}
-              <div className="flex mb-6 rounded-xl p-1 border border-white/[0.08]" style={{ background: '#0a0a0a' }}>
+              <div className="flex mb-6 rounded-none p-1 border border-white/[0.08]" style={{ background: '#0a0a0a' }}>
                 {[
                   { id: 'file', icon: UploadCloud, label: 'Upload File' },
                   { id: 'url', icon: Globe, label: 'Paste URL' },
@@ -257,31 +274,39 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg transition-all text-sm ${activeTab === tab.id
-                      ? 'bg-white text-black font-semibold'
-                      : 'text-neutral-500 hover:text-white'
+                    className={`flex-1 relative flex items-center justify-center gap-2 py-2 px-4 rounded-none transition-all text-sm group ${activeTab === tab.id ? 'text-black' : 'text-neutral-500 hover:text-white'
                       }`}
                   >
-                    <tab.icon size={18} />
-                    <span>{tab.label}</span>
+                    {activeTab === tab.id && (
+                      <motion.div
+                        layoutId="activeTab"
+                        className="absolute inset-0 bg-white"
+                        transition={{ type: "spring", bounce: 0.15, duration: 0.5 }}
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-2 font-semibold">
+                      <tab.icon size={18} />
+                      <span>{tab.label}</span>
+                    </span>
                   </button>
                 ))}
               </div>
 
-              {/* Content Area with Fixed Minimum Height to Prevent Shifting */}
               <div className="min-h-[400px]">
                 <AnimatePresence mode="wait">
                   {activeTab === 'file' ? (
                     <motion.div key="file-tab" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2 }}>
                       <div
-                        className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-all duration-200 h-full ${isDragging ? 'border-white/40 bg-white/[0.05]' : 'border-white/[0.12] hover:border-white/25 bg-white/[0.02]'}`}
+                        className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-none transition-all duration-200 h-full ${isDragging ? 'border-white/40 bg-white/[0.05]' : 'border-white/[0.12] hover:border-white/25 bg-white/[0.02]'}`}
                         style={{ minHeight: '400px' }}
                         onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} onDragOver={handleDragOver} onDrop={handleDrop}
                       >
                         {file ? (
                           <div className="flex flex-col items-center text-white">
                             <FileText className="h-16 w-16 text-neutral-400 mb-3" />
-                            <p className="text-lg font-medium text-white">{file.name}</p>
+                            <p className="text-lg font-medium text-white text-center break-all">
+                              {truncateText(file.name, 30, 4)}
+                            </p>
                             <p className="text-sm text-neutral-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
                             <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                               onClick={(e) => { e.stopPropagation(); setFile(null); }}
@@ -295,7 +320,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                             <UploadCloud className="h-16 w-16 text-neutral-500 mb-3" />
                             <p className="text-white text-lg mb-2">Drag & drop your file here</p>
                             <p className="text-neutral-500 text-sm mb-3">or</p>
-                            <label htmlFor="file-upload" className="bg-white text-black px-6 py-2 rounded-lg font-semibold hover:opacity-90 transition-opacity cursor-pointer">
+                            <label htmlFor="file-upload" className="bg-white text-black px-6 py-2 rounded-none font-semibold hover:opacity-90 transition-opacity cursor-pointer">
                               <span>Browse Files</span>
                               <input id="file-upload" name="file-upload" type="file" className="sr-only" accept=".epub,.txt,.docx,.pdf" onChange={handleFileChange} />
                             </label>
@@ -314,14 +339,14 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                           <input
                             id="url-input" type="url" value={url} onChange={(e) => setUrl(e.target.value)}
                             placeholder="https://example.com/article"
-                            className={`w-full px-4 py-3 bg-white/[0.04] border rounded-xl focus:outline-none focus:border-white/30 text-white placeholder-neutral-600 transition-colors ${isUrlValid ? 'border-emerald-500/50' : url ? 'border-red-500/50' : 'border-white/[0.08]'}`}
+                            className={`w-full px-4 py-3 bg-white/[0.04] border rounded-none focus:outline-none focus:border-white/30 text-white placeholder-neutral-600 transition-colors ${isUrlValid ? 'border-emerald-500/50' : url ? 'border-red-500/50' : 'border-white/[0.08]'}`}
                             disabled={isUploading}
                           />
                           {isUrlValid && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400">✓</span>}
                         </div>
                         <p className="text-xs text-neutral-600 mt-1">Enter a full URL starting with http:// or https://</p>
                       </div>
-                      <div className="p-3 bg-white/[0.03] rounded-xl border border-white/[0.06]">
+                      <div className="p-3 bg-white/[0.03] rounded-none border border-white/[0.06]">
                         <p className="text-xs text-neutral-500">
                           <strong className="text-neutral-400">Works great with:</strong> Wikipedia, Medium, news sites, blogs, documentation, and most article-based websites.
                         </p>
@@ -335,8 +360,8 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                         </label>
                         <input
                           id="text-title" type="text" value={textTitle} onChange={(e) => setTextTitle(e.target.value)}
-                          placeholder="Auto-generated from first line"
-                          className="w-full px-4 py-2 bg-white/[0.04] border border-white/[0.08] rounded-xl focus:outline-none focus:border-white/20 text-white placeholder-neutral-600 transition-colors"
+                          placeholder="Funny name generated if empty"
+                          className="w-full px-4 py-2 bg-white/[0.04] border border-white/[0.08] rounded-none focus:outline-none focus:border-white/20 text-white placeholder-neutral-600 transition-colors"
                           disabled={isUploading}
                         />
                       </div>
@@ -345,7 +370,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                         <textarea
                           id="text-content" value={textContent} onChange={(e) => setTextContent(e.target.value)}
                           placeholder="Type or paste your text here..."
-                          className="w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl focus:outline-none focus:border-white/20 text-white placeholder-neutral-600 transition-colors resize-none"
+                          className="w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-none focus:outline-none focus:border-white/20 text-white placeholder-neutral-600 transition-colors resize-none"
                           rows={8} disabled={isUploading}
                         />
                         <div className="flex justify-between items-center mt-2 text-xs">
@@ -367,7 +392,6 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
 
               {error && <p className="text-sm text-red-400 mt-4 text-center">{error}</p>}
 
-              {/* Enhanced Voice Selection Dropdown */}
               <div className="mt-6 mb-6">
                 <label className="block text-sm font-medium text-neutral-300 mb-2 flex items-center gap-2">
                   <Mic size={18} /> Initial Voice
@@ -377,7 +401,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                   <button
                     onClick={() => setIsVoiceDropdownOpen(!isVoiceDropdownOpen)}
                     disabled={isUploading}
-                    className="w-full px-4 py-2.5 bg-white/[0.04] border border-white/[0.08] rounded-xl focus:outline-none focus:border-white/20 text-white transition-all flex items-center justify-between group"
+                    className="w-full px-4 py-2.5 bg-white/[0.04] border border-white/[0.08] rounded-none focus:outline-none focus:border-white/20 text-white transition-all flex items-center justify-between group"
                   >
                     <span className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-white/40 group-hover:bg-white/80 transition-colors" />
@@ -396,7 +420,7 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
                         transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="absolute bottom-full left-0 right-0 mb-2 bg-[#111111] border border-white/[0.08] rounded-xl overflow-hidden shadow-2xl z-50 py-1"
+                        className="absolute bottom-full left-0 right-0 mb-2 bg-[#111111] border border-white/[0.08] rounded-none overflow-hidden shadow-2xl z-50 py-1"
                         style={{ backdropFilter: 'blur(12px)' }}
                       >
                         {voices.map((voice, index) => (
@@ -422,18 +446,17 @@ export default function UploadModal({ isOpen, onClose, onUpload, initialText = '
                 <p className="text-xs text-neutral-600 mt-2">Choose which voice to process first. Other voices can be generated later.</p>
               </div>
 
-              {/* Action Buttons */}
               <div className="flex justify-end space-x-4">
                 <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                   onClick={onClose}
-                  className="px-6 py-2.5 rounded-lg text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20 transition-all"
+                  className="px-6 py-2.5 rounded-none text-neutral-400 border border-white/[0.08] hover:text-white hover:border-white/20 transition-all"
                   disabled={isUploading}
                 >
                   Cancel
                 </motion.button>
                 <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                   onClick={handleUpload}
-                  className={`px-6 py-2.5 rounded-lg font-bold transition-all flex items-center justify-center gap-2 ${!canUpload || isUploading
+                  className={`px-6 py-2.5 rounded-none font-bold transition-all flex items-center justify-center gap-2 ${!canUpload || isUploading
                     ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed border border-white/[0.06]'
                     : 'bg-white text-black hover:opacity-90'
                     }`}

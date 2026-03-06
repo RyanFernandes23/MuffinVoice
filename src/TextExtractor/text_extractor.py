@@ -16,6 +16,10 @@ class TextExtractor:
     def extract_file(self):
         """Default extraction method"""
         try:
+            # Skip pandoc for .txt files as it often misidentifies the input format
+            if self.extension == ".txt":
+                return self._extract_txt()
+                
             return pypandoc.convert_file(
                 self.filepath, "plain", extra_args=["--wrap=none"]
             )

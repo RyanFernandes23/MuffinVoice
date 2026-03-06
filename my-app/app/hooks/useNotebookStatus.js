@@ -7,9 +7,8 @@ const API_BASE_URL = typeof window !== 'undefined'
   : 'http://localhost:8000';
 
 /**
- * Custom hook for notebook status with SSE and polling fallback
- * Streams only active notebooks (queued/processing)
- * Auto-reconnects when new active notebooks detected
+ * Custom hook for notebook status with job-specific polling
+ * Polls only active notebooks (queued/processing)
  * @param {string} userId - User ID
  * @param {function} getToken - Function to get auth token
  * @returns {Object} { notebooks, activeNotebooks, loading, connectionStatus, refresh }
@@ -18,12 +17,9 @@ export function useNotebookStatus(userId, getToken) {
   const [notebooks, setNotebooks] = useState([]);
   const [activeNotebooks, setActiveNotebooks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 'sse' | 'polling' | 'disconnected'
+  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 'polling' | 'disconnected'
 
-  const readerRef = useRef(null);
-  const abortControllerRef = useRef(null);
   const pollingIntervalRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
   const isMountedRef = useRef(true);
 
   const POLLING_INTERVAL = 5000; // 5 seconds
@@ -67,14 +63,7 @@ export function useNotebookStatus(userId, getToken) {
   }, [userId, getToken]);
 
   /**
-   * Check if there are active notebooks (queued/processing)
-   */
-  const hasActiveNotebooks = useCallback((notebookList) => {
-    return notebookList.some(nb => nb.status === 'queued' || nb.status === 'processing');
-  }, []);
-
-  /**
-   * Start polling mode
+   * Start polling mode specifically for active jobs
    */
   const startPolling = useCallback(async () => {
     if (pollingIntervalRef.current) {
@@ -88,7 +77,7 @@ export function useNotebookStatus(userId, getToken) {
     const allNotebooks = await fetchAllNotebooks();
     setNotebooks(allNotebooks);
 
-    const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
+    let active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
     setActiveNotebooks(active);
 
     if (active.length === 0) {
@@ -96,17 +85,11 @@ export function useNotebookStatus(userId, getToken) {
       return;
     }
 
-    // Start polling interval
+    // Start polling interval for specific jobs
     pollingIntervalRef.current = setInterval(async () => {
       if (!isMountedRef.current) return;
 
-      const currentNotebooks = await fetchAllNotebooks();
-      setNotebooks(currentNotebooks);
-
-      const currentActive = currentNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
-      setActiveNotebooks(currentActive);
-
-      if (currentActive.length === 0) {
+      if (active.length === 0) {
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
@@ -115,130 +98,39 @@ export function useNotebookStatus(userId, getToken) {
         return;
       }
 
-      // If active notebooks detected, try to switch to SSE
-      if (hasActiveNotebooks(currentNotebooks)) {
-        // Just let it continue polling as fallback or wait it out. 
-        // Previously it called connectSSE() but that causes dependency cycles and stale closures.
-        // It's safer to just poll until complete since startPolling is the fallback anyway.
-      }
-    }, POLLING_INTERVAL);
-  }, [fetchAllNotebooks, hasActiveNotebooks]);
-
-  /**
-   * Connect to SSE endpoint
-   */
-  const connectSSE = useCallback(async () => {
-    if (!userId || !getToken) return;
-
-    // Clean up any existing connection
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-
-    if (readerRef.current) {
-      readerRef.current.cancel();
-      readerRef.current = null;
-    }
-
-    try {
-      const token = await getToken();
-
-      setConnectionStatus('sse');
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/notebook_status_stream/${userId}`,
-        {
+      try {
+        const token = await getToken();
+        const activeJobIds = active.map(nb => nb.job_id);
+        const response = await fetch(`${API_BASE_URL}/api/check_job_statuses`, {
+          method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'text/event-stream',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
           },
-        }
-      );
+          body: JSON.stringify({ job_ids: activeJobIds })
+        });
 
-      if (!response.ok) {
-        throw new Error(`SSE connection failed: ${response.status}`);
-      }
+        if (response.ok) {
+          const data = await response.json();
+          const updatedNotebooks = data.notebooks || [];
 
-      const reader = response.body.getReader();
-      readerRef.current = reader;
-      const decoder = new TextDecoder();
+          if (updatedNotebooks.length > 0) {
+            setNotebooks(prev => {
+              const prevMap = new Map(prev.map(nb => [nb.job_id, nb]));
+              updatedNotebooks.forEach(nb => prevMap.set(nb.job_id, nb));
+              // Ensure we sort them so UI does not jump around
+              return Array.from(prevMap.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            });
 
-      setLoading(false);
-
-      // Read stream
-      let buffer = '';
-
-      while (isMountedRef.current) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          console.log('Notebook SSE stream closed by server');
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-
-            // Skip heartbeat
-            if (dataStr === ':heartbeat') continue;
-
-            try {
-              const data = JSON.parse(dataStr);
-
-              if (data.error) {
-                console.error('Notebook SSE error:', data.message);
-                continue;
-              }
-
-              // Handle different event types
-              switch (data.type) {
-                case 'active_notebooks':
-                case 'status_update':
-                  // Merge active notebooks with existing list
-                  setActiveNotebooks(data.notebooks || []);
-                  setNotebooks(prev => {
-                    const activeMap = new Map((data.notebooks || []).map(nb => [nb.job_id, nb]));
-                    return prev.map(nb => activeMap.get(nb.job_id) || nb);
-                  });
-                  break;
-
-                case 'all_complete':
-                  // All notebooks complete, close SSE and stop polling
-                  setActiveNotebooks([]);
-                  // Fetch full list to get completed notebooks
-                  const allNotebooks = await fetchAllNotebooks();
-                  setNotebooks(allNotebooks);
-                  // Close connection and set status to disconnected
-                  reader.cancel();
-                  setConnectionStatus('disconnected');
-                  return;
-
-                default:
-                  console.log('Unknown SSE event type:', data.type);
-              }
-            } catch (e) {
-              console.error('Error parsing SSE data:', e);
-            }
+            active = updatedNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
+            setActiveNotebooks(active);
           }
         }
+      } catch (err) {
+        console.error('Error polling active jobs:', err);
       }
-
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        console.log('Notebook SSE connection aborted');
-      } else {
-        console.error('Failed to connect notebook SSE:', error);
-        // Fall back to polling
-        startPolling();
-      }
-    }
-  }, [userId, getToken, fetchAllNotebooks, startPolling]);
+    }, POLLING_INTERVAL);
+  }, [fetchAllNotebooks, getToken]);
 
   /**
    * Manual refresh function
@@ -251,20 +143,18 @@ export function useNotebookStatus(userId, getToken) {
     setActiveNotebooks(active);
     setLoading(false);
 
-    // If active notebooks exist, try to open SSE
-    if (hasActiveNotebooks(allNotebooks)) {
-      connectSSE();
+    if (active.length > 0) {
+      startPolling();
     }
-  }, [fetchAllNotebooks, hasActiveNotebooks, connectSSE]);
+  }, [fetchAllNotebooks, startPolling]);
 
   /**
-   * Initial load and SSE connection
+   * Initial load
    */
   useEffect(() => {
     isMountedRef.current = true;
 
     if (!userId) {
-      // Don't set disconnected yet, auth might just be loading
       return;
     }
 
@@ -298,8 +188,7 @@ export function useNotebookStatus(userId, getToken) {
       // We should always clear loading state now that we've tried (and possibly retried)
       setLoading(false);
 
-      // If there are active notebooks, use Polling
-      if (hasActiveNotebooks(allNotebooks)) {
+      if (active.length > 0) {
         startPolling();
       } else {
         // No active notebooks, do not poll
@@ -313,25 +202,9 @@ export function useNotebookStatus(userId, getToken) {
     // Cleanup
     return () => {
       isMountedRef.current = false;
-
-      if (readerRef.current) {
-        readerRef.current.cancel();
-        readerRef.current = null;
-      }
-
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
-      }
-
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

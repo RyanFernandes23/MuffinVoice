@@ -20,7 +20,8 @@ class Notebook(SQLModel, table=True):
     source_url: Optional[str] = Field(
         default=None, max_length=2048
     )  # Store webpage source URL
-
+    is_public: bool = Field(default=False)
+    
     user: Optional["User"] = Relationship(back_populates="notebooks")
     notes: List["Note"] = Relationship(back_populates="notebook", cascade_delete=True)
 

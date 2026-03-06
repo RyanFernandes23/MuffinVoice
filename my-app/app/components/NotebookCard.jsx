@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useCallback, useMemo } from 'react';
 import { Play, Headphones, Trash2, StickyNote, ExternalLink, Loader2, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 
+import { truncateText } from '../utils/textUtils';
+
 const STALE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 const voiceNames = {
@@ -27,7 +29,11 @@ export default function NotebookCard({
   sourceUrl,
   onOpen,
   onDelete,
+  isDemo = false,
 }) {
+  // Truncate the title
+  const truncatedTitle = truncateText(title, 60, 10);
+
   // Detect stale notebooks stuck in processing/queued for >10 minutes
   const isStale = useMemo(() => {
     if (status !== 'processing' && status !== 'queued') return false;
@@ -96,6 +102,12 @@ export default function NotebookCard({
           {currentStatus.label}
         </span>
 
+        {isDemo && (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-lg bg-white text-black border border-white/20">
+            Free
+          </span>
+        )}
+
         {sourceUrl && (
           <a
             href={sourceUrl}
@@ -110,8 +122,8 @@ export default function NotebookCard({
       </div>
 
       {/* Title */}
-      <h3 className="text-base font-semibold text-white mb-3 line-clamp-2">
-        {title}
+      <h3 className="text-base font-semibold text-white mb-3 line-clamp-2 h-12">
+        {truncatedTitle}
       </h3>
 
       {/* Meta Info */}
@@ -153,12 +165,14 @@ export default function NotebookCard({
           </div>
         )}
 
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
-          className="p-2 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.06]"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        {!isDemo && !isFailed && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+            className="p-2 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.06]"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );
