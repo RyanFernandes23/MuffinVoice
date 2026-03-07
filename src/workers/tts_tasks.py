@@ -27,8 +27,6 @@ from src.utils.RedisClient import redis_client
 load_dotenv()
 
 
-# --- Removed Voice Status Pub/Sub ---
-
 # Set up logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -111,16 +109,6 @@ def update_job_status(job_id, status):
     if status in ["completed", "failed"]:
         update_db_status(job_id, status)
 
-    # 3. Publish to SSE clients
-    try:
-        from src.api.utils import get_user_id_for_job, publish_notebook_status
-
-        user_id = get_user_id_for_job(job_id)
-        if user_id:
-            publish_notebook_status(user_id, job_id, status)
-    except Exception as e:
-        logging.warning(f"Failed to publish notebook status for {job_id}: {e}")
-
 
 def update_job_status_with_tokens(job_id, status, total_tokens):
     """Update job status with token tracking for completed jobs."""
@@ -138,16 +126,6 @@ def update_job_status_with_tokens(job_id, status, total_tokens):
     else:
         update_db_status(job_id, status)
 
-    # 3. Publish to SSE clients
-    try:
-        from src.api.utils import get_user_id_for_job, publish_notebook_status
-
-        user_id = get_user_id_for_job(job_id)
-        if user_id:
-            publish_notebook_status(user_id, job_id, status)
-    except Exception as e:
-        logging.warning(f"Failed to publish notebook status for {job_id}: {e}")
-
 
 @dramatiq.actor
 def complete_job_status(job_id, final_status):
@@ -158,8 +136,10 @@ def complete_job_status(job_id, final_status):
 # --- Middleware Setup ---
 result_backend = RedisBackend(client=redis_client)
 rate_limiter_backend = RateLimitRedisBackend(client=redis_client)
-redis_broker.add_middleware(Results(backend=result_backend))
-redis_broker.add_middleware(GroupCallbacks(rate_limiter_backend=rate_limiter_backend))
+if not any(isinstance(m, Results) for m in redis_broker.middleware):
+    redis_broker.add_middleware(Results(backend=result_backend))
+if not any(isinstance(m, GroupCallbacks) for m in redis_broker.middleware):
+    redis_broker.add_middleware(GroupCallbacks(rate_limiter_backend=rate_limiter_backend))
 dramatiq.set_broker(redis_broker)
 
 _s3_client = None
@@ -178,8 +158,7 @@ def get_s3_client():
     return _s3_client
 
 
-
-@dramatiq.actor
+@dramatiq.actor(queue_name="default")
 def process_speeches(user_id, job_id, voice):
     """Orchestrator: dispatches all TTS chunks in parallel, then finalizes."""
     s3 = get_s3_client()
@@ -187,8 +166,6 @@ def process_speeches(user_id, job_id, voice):
 
     try:
         logging.info(f"Starting process_speeches for job {job_id}")
-
-        # Publish that voice processing has started - Removed (polling used)
 
         # Load chunks from S3
         response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
@@ -238,7 +215,7 @@ def process_speeches(user_id, job_id, voice):
         )
 
 
-@dramatiq.actor(store_results=True, max_retries=20, min_backoff=1000)
+@dramatiq.actor(queue_name="default", store_results=True, max_retries=20, min_backoff=1000)
 def process_single_speech(index, text, voice, user_id, job_id):
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
@@ -313,7 +290,7 @@ def process_single_speech(index, text, voice, user_id, job_id):
         raise
 
 
-@dramatiq.actor
+@dramatiq.actor(queue_name="default")
 def finalize_manifest(user_id, job_id, voice):
     s3 = get_s3_client()
     s3_prefix = f"{user_id}/{job_id}"
@@ -409,12 +386,9 @@ def finalize_manifest(user_id, job_id, voice):
         # Pass total tokens to update_job_status
         update_job_status_with_tokens(job_id, "completed", total_tokens_used)
 
-        # Publish voice completion status for SSE clients - Removed (polling used)
-
         # Cleanup
         s3.delete_object(Bucket=bucket, Key=manifest_data_key)
 
     except Exception as e:
         logging.error(f"Finalize crashed: {e}", exc_info=True)
         update_job_status(job_id, "failed")
-

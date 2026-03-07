@@ -72,14 +72,7 @@ export default function VoiceSwitcher({
                             <h3 className="text-white font-semibold text-sm flex items-center gap-2">
                                 <History size={16} /> Available Voices
                             </h3>
-                            <span className={`text-xs px-2 py-0.5 rounded-lg ${connectionStatus === 'sse'
-                                ? 'bg-emerald-500/10 text-emerald-400'
-                                : connectionStatus === 'polling'
-                                    ? 'bg-amber-500/10 text-amber-400'
-                                    : 'bg-neutral-800 text-neutral-500'
-                                }`}>
-                                {connectionStatus === 'sse' ? '● Live' : connectionStatus === 'polling' ? '○ Polling' : '○ Offline'}
-                            </span>
+
                         </div>
 
                         <div className="space-y-2">

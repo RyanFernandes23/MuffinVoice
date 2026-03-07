@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies if required by ffmpeg/audio libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Multi-process execution for high concurrent IO
+CMD ["dramatiq", "src.workers.tts_tasks", "-q", "default", "--processes", "4", "--threads", "8"]

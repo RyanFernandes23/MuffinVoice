@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { FaTrash, FaEdit, FaSearch, FaTimes } from 'react-icons/fa';
+import { truncateText } from '../utils/textUtils';
 
 export default function NotesList({
   notes = [], onNoteClick, onDeleteNote, onEditNote, isLoading = false,
@@ -130,7 +131,7 @@ export default function NotesList({
               </div>
 
               {/* Note Text */}
-              <p className="text-sm text-neutral-300 mb-2 line-clamp-2 whitespace-pre-wrap break-words">{note.userNote}</p>
+              <p className="text-sm text-neutral-300 mb-2 line-clamp-2 whitespace-pre-wrap break-words">{truncateText(note.userNote, 24, 5)}</p>
 
               {/* Subtitle Preview */}
               {note.subtitleText && (

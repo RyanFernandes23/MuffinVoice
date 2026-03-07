@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies if required by any python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the wtpsplit model at build time to avoid runtime delays and failures
+RUN python -c "from wtpsplit import SaT; SaT('sat-12l-sm')"
+
+COPY . .
+
+# Ensure the log and uploads directories exist
+RUN mkdir -p uploads logs
+
+# We specifically restrict to 1 process to cap RAM utilization
+CMD ["dramatiq", "src.workers.chunker_tasks", "-q", "chunking", "--processes", "1", "--threads", "4"]

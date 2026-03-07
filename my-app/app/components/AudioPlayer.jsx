@@ -8,6 +8,7 @@ import {
   Rewind, FastForward, Headphones, FileText, MessageSquareText
 } from 'lucide-react';
 
+import { truncateText } from '../utils/textUtils';
 import NotesModal from './NotesModal';
 import VoiceSwitcher from './AudioPlayer/VoiceSwitcher';
 import NotesSidebar from './AudioPlayer/NotesSidebar';
@@ -35,6 +36,8 @@ export default function AudioPlayer({
   onCloseSubtitle,
   voice: initialVoice = 'af_bella'
 }) {
+  const truncatedTitle = truncateText(title, 80, 10);
+
   const voiceOptionsRef = useRef(null);
 
   const [selectedVoice, setSelectedVoice] = useState(initialVoice);
@@ -96,7 +99,8 @@ export default function AudioPlayer({
       loadSource(newUrl);
       setShowVoiceOptions(false);
     } else if (voiceStatus === 'not started') {
-      // Voice not generated yet — trigger processing
+      // Voice not generated yet — trigger processing (if logged in)
+      if (!getToken) return;
       setProcessingVoice(voiceId);
       try {
         const token = await getToken();
@@ -153,7 +157,7 @@ export default function AudioPlayer({
 
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xl font-bold text-white max-w-[calc(100%-60px)] truncate flex items-center gap-2">
-          <Headphones className="text-neutral-400" size={20} /> {title}
+          <Headphones className="text-neutral-400" size={20} /> {truncatedTitle}
         </h3>
       </div>
 
@@ -245,12 +249,17 @@ export default function AudioPlayer({
           <button onClick={onToggleSubtitle} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl font-medium text-xs transition-all ${isSubtitleOpen ? 'bg-white text-black' : 'text-neutral-400 border border-white/[0.08]'}`}>
             <FileText size={14} /> Subtitles
           </button>
-          <button onClick={() => setShowNotesModal(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs text-neutral-400 border border-white/[0.08] hover:text-white transition-all">
-            <StickyNote size={14} /> Add Note
-          </button>
-          <button onClick={() => setShowNotesSidebar(!showNotesSidebar)} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl font-medium text-xs transition-all ${showNotesSidebar ? 'bg-white text-black' : 'text-neutral-400 border border-white/[0.08]'}`}>
-            <MessageSquareText size={14} /> Notes {notes.length > 0 && `(${notes.length})`}
-          </button>
+
+          {getToken && (
+            <>
+              <button onClick={() => setShowNotesModal(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs text-neutral-400 border border-white/[0.08] hover:text-white transition-all">
+                <StickyNote size={14} /> Add Note
+              </button>
+              <button onClick={() => setShowNotesSidebar(!showNotesSidebar)} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl font-medium text-xs transition-all ${showNotesSidebar ? 'bg-white text-black' : 'text-neutral-400 border border-white/[0.08]'}`}>
+                <MessageSquareText size={14} /> Notes {notes.length > 0 && `(${notes.length})`}
+              </button>
+            </>
+          )}
           <VoiceSwitcher
             userId={userId} jobId={jobId} getToken={getToken}
             selectedVoice={selectedVoice} onVoiceSelect={handleVoiceSelect}

@@ -7,6 +7,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
+from pydantic import BaseModel
+
+class JobStatusRequest(BaseModel):
+    job_ids: List[str]
 
 from fastapi import (
     APIRouter,
@@ -26,7 +30,9 @@ from src.api.deps import (
     AVAILABLE_VOICES,
     MAX_FILE_SIZE,
     clerk_auth,
+    clerk_auth_optional,
     get_current_user,
+    get_current_admin,
     logger,
 )
 from src.api.schema import Note, Notebook
@@ -39,12 +45,12 @@ from src.api.utils import (
     get_job_status,
     get_session,
     get_unique_notebook_title,
-    process_file_task,
     sanitize_display_filename,
     set_job_status,
 )
+from src.workers.chunker_tasks import process_file_task
 from src.TextExtractor.web_extractor import WebpageExtractor
-from src.TTS_Workers.tasks import get_s3_client, process_speeches
+from src.workers.tts_tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(prefix="/api", tags=["notebooks", "tts", "s3"])
@@ -136,7 +142,7 @@ async def upload_file(
     session.commit()
     set_job_status(job_id, "queued")
 
-    background_tasks.add_task(process_file_task, user_id, job_id, str(temp_path), voice)
+    process_file_task.send(user_id, job_id, str(temp_path), voice)
 
     logger.info(
         f"File uploaded for user {user_id}, job_id {job_id}, tokens_requested: {estimated_tokens}"
@@ -261,7 +267,7 @@ async def upload_webpage(
     set_job_status(job_id, "queued")
 
     # Process the extracted text
-    background_tasks.add_task(process_file_task, user_id, job_id, temp_path, voice)
+    process_file_task.send(user_id, job_id, str(temp_path), voice)
 
     logger.info(
         f"Webpage uploaded for user {user_id}, job_id {job_id}, url: {url}, tokens_requested: {estimated_tokens}"
@@ -373,7 +379,7 @@ async def upload_text(
     set_job_status(job_id, "queued")
 
     # Process the text
-    background_tasks.add_task(process_file_task, user_id, job_id, str(temp_path), voice)
+    process_file_task.send(user_id, job_id, str(temp_path), voice)
 
     logger.info(
         f"Text uploaded for user {user_id}, job_id {job_id}, tokens_requested: {estimated_tokens}"
@@ -402,6 +408,81 @@ async def get_my_notebooks(
     return session.exec(statement).all()
 
 
+@notebooks_router.get("/public_notebooks", response_model=List[Notebook])
+async def get_public_notebooks(session: Session = Depends(get_session)):
+    """
+    Returns all notebooks marked as public/free and completed.
+    """
+    statement = (
+        select(Notebook)
+        .where(Notebook.is_public == True, Notebook.status == "completed")
+        .order_by(desc(Notebook.created_at))
+    )
+    return session.exec(statement).all()
+
+
+@notebooks_router.get("/admin/notebooks", response_model=List[Notebook])
+async def admin_get_all_notebooks(
+    session: Session = Depends(get_session),
+    admin_id: str = Depends(get_current_admin)
+):
+    """
+    Returns all notebooks in the system. Admin Only.
+    """
+    statement = select(Notebook).order_by(desc(Notebook.created_at))
+    return session.exec(statement).all()
+
+
+@notebooks_router.post("/admin/notebooks/{job_id}/toggle_public", response_model=Notebook)
+async def admin_toggle_public(
+    job_id: str,
+    session: Session = Depends(get_session),
+    admin_id: str = Depends(get_current_admin)
+):
+    """
+    Toggles the public status of a notebook. Admin Only.
+    """
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    
+    notebook.is_public = not notebook.is_public
+    session.add(notebook)
+    session.commit()
+    session.refresh(notebook)
+    return notebook
+
+
+@notebooks_router.delete("/admin/notebooks/{job_id}", status_code=204)
+async def admin_delete_notebook(
+    job_id: str,
+    session: Session = Depends(get_session),
+    admin_id: str = Depends(get_current_admin)
+):
+    """
+    Deletes any notebook. Admin Only.
+    """
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    notebook_user_id = notebook.user_id
+
+    s3 = get_s3_client()
+    try:
+        # Delete S3 artifacts
+        s3.delete_object(Bucket=AWS_BUCKET_NAME, Key=f"{notebook_user_id}/{job_id}/manifest.m3u8")
+        s3.delete_object(Bucket=AWS_BUCKET_NAME, Key=f"{notebook_user_id}/{job_id}/subtitles.json")
+    except Exception as e:
+        logger.warning(f"Error deleting S3 objects for {job_id}: {e}")
+
+    session.delete(notebook)
+    session.commit()
+    return
+
+
 @notebooks_router.delete("/notebooks/{job_id}", status_code=204)
 async def delete_notebook(
     job_id: str,
@@ -419,6 +500,12 @@ async def delete_notebook(
         raise HTTPException(
             status_code=404,
             detail="Notebook not found or you don't have permission to delete it.",
+        )
+
+    if notebook.is_public:
+        raise HTTPException(
+            status_code=403,
+            detail="Public notebooks cannot be deleted.",
         )
 
     notebook_user_id = notebook.user_id
@@ -491,11 +578,25 @@ async def job_status(job_id: str, _=Depends(clerk_auth)):
 
 @notebooks_router.get("/stream/{user_id}/{job_id}/{voice}/manifest.m3u8")
 async def serve_manifest(
-    user_id: str, job_id: str, voice: str, token_payload=Depends(clerk_auth)
+    user_id: str,
+    job_id: str,
+    voice: str,
+    token_payload=Depends(clerk_auth_optional),
+    session: Session = Depends(get_session),
 ):
-    if token_payload.decoded.get("sub") != user_id:
+    # Check if notebook is public
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+
+    is_authorized = False
+    if notebook and notebook.is_public:
+        is_authorized = True
+    elif token_payload and token_payload.decoded.get("sub") == user_id:
+        is_authorized = True
+
+    if not is_authorized:
         logger.warning(
-            f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}"
+            f"Unauthorized: {token_payload.decoded.get('sub') if token_payload else 'Guest'} tried to access {user_id}"
         )
         raise HTTPException(
             status_code=403, detail="You do not have permission to view this file."
@@ -524,11 +625,22 @@ async def serve_speech(
     job_id: str,
     voice: str,
     speech_index: str,
-    token_payload=Depends(clerk_auth),
+    token_payload=Depends(clerk_auth_optional),
+    session: Session = Depends(get_session),
 ):
-    if token_payload.decoded.get("sub") != user_id:
+    # Check if notebook is public
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+
+    is_authorized = False
+    if notebook and notebook.is_public:
+        is_authorized = True
+    elif token_payload and token_payload.decoded.get("sub") == user_id:
+        is_authorized = True
+
+    if not is_authorized:
         logger.warning(
-            f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}"
+            f"Unauthorized: {token_payload.decoded.get('sub') if token_payload else 'Guest'} tried to access {user_id}"
         )
         raise HTTPException(
             status_code=403, detail="You do not have permission to view this file."
@@ -563,10 +675,25 @@ async def serve_speech(
 
 
 @notebooks_router.get("/stream/subtitles/{user_id}/{job_id}")
-async def serve_subtitles(user_id: str, job_id: str, token_payload=Depends(clerk_auth)):
-    if token_payload.decoded.get("sub") != user_id:
+async def serve_subtitles(
+    user_id: str,
+    job_id: str,
+    token_payload=Depends(clerk_auth_optional),
+    session: Session = Depends(get_session),
+):
+    # Check if notebook is public
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+
+    is_authorized = False
+    if notebook and notebook.is_public:
+        is_authorized = True
+    elif token_payload and token_payload.decoded.get("sub") == user_id:
+        is_authorized = True
+
+    if not is_authorized:
         logger.warning(
-            f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}"
+            f"Unauthorized: {token_payload.decoded.get('sub') if token_payload else 'Guest'} tried to access {user_id}"
         )
         raise HTTPException(
             status_code=403, detail="You do not have permission to view this file."
@@ -589,10 +716,25 @@ async def serve_subtitles(user_id: str, job_id: str, token_payload=Depends(clerk
 
 
 @notebooks_router.get("/stream/chunks/{user_id}/{job_id}")
-async def serve_chunk(user_id: str, job_id: str, token_payload=Depends(clerk_auth)):
-    if token_payload.decoded.get("sub") != user_id:
+async def serve_chunk(
+    user_id: str,
+    job_id: str,
+    token_payload=Depends(clerk_auth_optional),
+    session: Session = Depends(get_session),
+):
+    # Check if notebook is public
+    statement = select(Notebook).where(Notebook.job_id == job_id)
+    notebook = session.exec(statement).first()
+
+    is_authorized = False
+    if notebook and notebook.is_public:
+        is_authorized = True
+    elif token_payload and token_payload.decoded.get("sub") == user_id:
+        is_authorized = True
+
+    if not is_authorized:
         logger.warning(
-            f"Unauthorized: {token_payload.get('sub')} tried to access {user_id}"
+            f"Unauthorized: {token_payload.decoded.get('sub') if token_payload else 'Guest'} tried to access {user_id}"
         )
         raise HTTPException(
             status_code=403, detail="You do not have permission to view this file."
@@ -812,114 +954,31 @@ async def get_all_voices_status(user_id: str, job_id: str) -> dict:
         return {"job_id": job_id, "job_status": "error", "voices": []}
 
 
-@notebooks_router.get("/voice_status_stream/{user_id}/{job_id}")
-async def voice_status_stream(
-    user_id: str, job_id: str, token_payload=Depends(clerk_auth)
+@notebooks_router.post("/check_job_statuses")
+async def check_job_statuses(
+    request: JobStatusRequest,
+    token_payload=Depends(clerk_auth),
+    session: Session = Depends(get_session)
 ):
     """
-    SSE endpoint for real-time voice status updates.
-    Streams voice status changes as they happen via Redis pub/sub.
-    Includes automatic fallback support header for clients.
+    Batch status endpoint for job-specific polling.
+    Accepts a list of job IDs and returns their current statuses.
     """
-    if token_payload.decoded.get("sub") != user_id:
-        logger.warning(
-            f"Unauthorized SSE attempt: {token_payload.decoded.get('sub')} tried to access {user_id}"
-        )
-        raise HTTPException(
-            status_code=403, detail="You do not have permission to view this stream."
-        )
+    user_id = token_payload.decoded.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        """Generate SSE events with voice status updates."""
-        pubsub = None
-        try:
-            # Create pub/sub connection
-            pubsub = redis_client.pubsub()
-            channel = f"voice_status:{job_id}"
-            pubsub.subscribe(channel)
+    if not request.job_ids:
+        return {"notebooks": []}
 
-            # Get initial status
-            state = await get_all_voices_status(user_id, job_id)
-            yield f"data: {json.dumps(state)}\n\n"
-
-            # Listen for updates
-            while True:
-                try:
-                    # Wait for message with 30 second timeout (heartbeat)
-                    message = await asyncio.wait_for(
-                        asyncio.to_thread(pubsub.get_message, timeout=1.0), timeout=30.0
-                    )
-
-                    if message and message["type"] == "message":
-                        try:
-                            update_data = json.loads(message["data"])
-                            updated_voice = update_data.get("voice")
-                            new_status = update_data.get("status")
-                            
-                            if updated_voice and new_status:
-                                # Explicitly update our local state copy to bypass S3 delays
-                                voice_found = False
-                                for v in state.get("voices", []):
-                                    if v.get("name") == updated_voice:
-                                        v["status"] = new_status
-                                        voice_found = True
-                                        break
-                                if not voice_found:
-                                    state.setdefault("voices", []).append({"name": updated_voice, "status": new_status})
-                                
-                                # Also update job status if it's in the payload or re-fetch it
-                                job_data = get_job_status(job_id)
-                                state["job_status"] = (
-                                    job_data.get(b"status", b"unknown").decode("utf-8")
-                                    if isinstance(job_data, dict) else "unknown"
-                                )
-                                    
-                            yield f"data: {json.dumps(state)}\n\n"
-                        except Exception as e:
-                            logger.error(f"Error processing voice status message: {e}")
-                            # Fallback: re-fetch everything
-                            state = await get_all_voices_status(user_id, job_id)
-                            yield f"data: {json.dumps(state)}\n\n"
-
-                except asyncio.TimeoutError:
-                    yield ":heartbeat\n\n"
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"SSE error for job {job_id}: {e}")
-            yield f"data: {json.dumps({'error': 'Stream error', 'message': str(e)})}\n\n"
-        finally:
-            if pubsub:
-                pubsub.unsubscribe()
-                pubsub.close()
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable Nginx buffering
-        },
+    statement = select(Notebook).where(
+        Notebook.user_id == user_id,
+        Notebook.job_id.in_(request.job_ids)
     )
+    notebooks = session.exec(statement).all()
 
-
-async def get_active_notebooks(user_id: str) -> list:
-    """
-    Get all active (queued/processing) notebooks for a user.
-    """
-    with Session(engine) as session:
-        statement = (
-            select(Notebook)
-            .where(
-                Notebook.user_id == user_id,
-                Notebook.status.in_(["queued", "processing"]),
-            )
-            .order_by(desc(Notebook.created_at))
-        )
-        notebooks = session.exec(statement).all()
-        return [
+    return {
+        "notebooks": [
             {
                 "job_id": nb.job_id,
                 "title": nb.title,
@@ -930,124 +989,7 @@ async def get_active_notebooks(user_id: str) -> list:
             }
             for nb in notebooks
         ]
-
-
-@notebooks_router.get("/notebook_status_stream/{user_id}")
-async def notebook_status_stream(user_id: str, token_payload=Depends(clerk_auth)):
-    """
-    SSE endpoint for real-time notebook status updates.
-    Streams only active notebooks (queued/processing).
-    Sends 'all_complete' event and closes when no active notebooks remain.
-    """
-    if token_payload.decoded.get("sub") != user_id:
-        logger.warning(
-            f"Unauthorized SSE attempt: {token_payload.decoded.get('sub')} tried to access {user_id}"
-        )
-        raise HTTPException(
-            status_code=403, detail="You do not have permission to view this stream."
-        )
-
-    async def event_generator() -> AsyncGenerator[str, None]:
-        """Generate SSE events with notebook status updates."""
-        pubsub = None
-        try:
-            # Create pub/sub connection
-            pubsub = redis_client.pubsub()
-            channel = f"notebook_status:{user_id}"
-            pubsub.subscribe(channel)
-
-            # Get initial active notebooks
-            active_notebooks = await get_active_notebooks(user_id)
-
-            # If no active notebooks initially, send all_complete and close
-            if not active_notebooks:
-                yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
-                return
-
-            # Send initial data
-            yield f"data: {json.dumps({'type': 'active_notebooks', 'notebooks': active_notebooks})}\n\n"
-
-            # Track active job IDs
-            active_job_ids = {nb["job_id"] for nb in active_notebooks}
-
-            # Listen for updates
-            while True:
-                try:
-                    # Wait for message with 30 second timeout (heartbeat)
-                    message = await asyncio.wait_for(
-                        asyncio.to_thread(pubsub.get_message, timeout=1.0), timeout=30.0
-                    )
-
-                    # Triggered by message OR periodically re-checking for safety
-                    should_refresh = (message and message["type"] == "message")
-                    
-                except asyncio.TimeoutError:
-                    yield ":heartbeat\n\n"
-                    should_refresh = True
-
-                if should_refresh:
-                    # Get fresh status. Important: also fetch just-completed jobs 
-                    # so the frontend can transition them to "Ready".
-                    current_active = await get_active_notebooks(user_id)
-                    current_active_ids = {nb["job_id"] for nb in current_active}
-                    
-                    # Jobs that were active but are now gone (completed or failed)
-                    finished_job_ids = active_job_ids - current_active_ids
-                    
-                    if finished_job_ids:
-                        # Fetch the final state of these finished jobs
-                        with Session(engine) as session:
-                            finished_notebooks = session.exec(
-                                select(Notebook).where(
-                                    Notebook.user_id == user_id,
-                                    Notebook.job_id.in_(list(finished_job_ids))
-                                )
-                            ).all()
-                            
-                            finished_data = [
-                                {
-                                    "job_id": nb.job_id, "title": nb.title, "voice": nb.voice,
-                                    "status": nb.status, "tokens_used": nb.tokens_used,
-                                    "created_at": nb.created_at.isoformat() if nb.created_at else None,
-                                } for nb in finished_notebooks
-                            ]
-                            
-                            # Send the update containing both new active and newly finished jobs
-                            yield f"data: {json.dumps({'type': 'status_update', 'notebooks': current_active + finished_data})}\n\n"
-                            
-                        # Update tracking
-                        active_job_ids = current_active_ids
-                        
-                        # If zero active jobs remain, send final all_complete and close
-                        if not active_job_ids:
-                            yield f"data: {json.dumps({'type': 'all_complete', 'notebooks': []})}\n\n"
-                            break
-                    elif current_active_ids != active_job_ids:
-                        # New jobs appeared
-                        active_job_ids = current_active_ids
-                        yield f"data: {json.dumps({'type': 'status_update', 'notebooks': current_active})}\n\n"
-
-        except asyncio.CancelledError:
-            logger.info(f"Notebook SSE connection cancelled for user {user_id}")
-            raise
-        except Exception as e:
-            logger.error(f"Notebook SSE error for user {user_id}: {e}")
-            error_data = {"type": "error", "error": "Stream error", "message": str(e)}
-            yield f"data: {json.dumps(error_data)}\n\n"
-        finally:
-            if pubsub:
-                pubsub.unsubscribe()
-                pubsub.close()
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    }
 
 
 @notebooks_router.post("/cleanup_stale_jobs")

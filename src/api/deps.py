@@ -31,12 +31,31 @@ if not jwks_url:
 
 clerk_config = ClerkConfig(jwks_url=jwks_url)
 clerk_auth = ClerkHTTPBearer(config=clerk_config)
+clerk_auth_optional = ClerkHTTPBearer(config=clerk_config, auto_error=False)
 
 
 async def get_current_user(token_payload=Depends(clerk_auth)) -> str:
     user_id = token_payload.decoded.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: no user ID")
+    return user_id
+
+
+async def get_current_admin(user_id: str = Depends(get_current_user)) -> str:
+    admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
+    admin_ids = [i.strip() for i in admin_ids_str.split(",") if i.strip()]
+    
+    # If ADMIN_USER_IDS is empty, for safety, we might not want everyone to be admin.
+    # But for local dev if the user hasn't set it, maybe we allow it?
+    # Let's be strict: if it's set, check it. If not set, allow NO ONE unless it's explicitly allowed.
+    if not admin_ids:
+        logger.warning("ADMIN_USER_IDS not set in .env. No one has admin access.")
+        raise HTTPException(status_code=403, detail="Admin access not configured.")
+        
+    if user_id not in admin_ids:
+        logger.warning(f"Unauthorized admin access attempt by user: {user_id}")
+        raise HTTPException(status_code=403, detail="User is not an administrator.")
+        
     return user_id
 
 

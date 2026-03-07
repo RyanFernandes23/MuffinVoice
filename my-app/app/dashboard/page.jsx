@@ -16,6 +16,7 @@ import NotebookCard from '../components/NotebookCard';
 import AudioPlayer from '../components/AudioPlayer';
 import UploadModal from '../components/UploadModal';
 import SubtitleWindow from '../components/SubtitleWindow';
+import FreeAudiobooksSection from '../components/FreeAudiobooksSection';
 
 import { useNotebookStatus } from '../hooks/useNotebookStatus';
 import { useUsage } from '../../hooks/useUsage';
@@ -131,7 +132,6 @@ export default function DashboardPage() {
     },
     [getToken]
   );
-
   const deleteNotebook = async (jobId) => {
     const success = await deleteNotebookOptimistic(jobId);
 
@@ -146,6 +146,30 @@ export default function DashboardPage() {
       toast.error('Failed to delete');
     }
   };
+
+  const playPublicNotebook = useCallback(
+    async (notebook) => {
+      try {
+        const manifestUrl = `${API_BASE_URL}/api/stream/${notebook.user_id}/${notebook.job_id}/${notebook.voice}/manifest.m3u8`;
+
+        // Fetch subtitles as guest if needed
+        const res = await fetch(
+          `${API_BASE_URL}/api/stream/subtitles/${notebook.user_id}/${notebook.job_id}`
+        );
+
+        let data = { segments: [] };
+        if (res.ok) data = await res.json();
+
+        setSubtitleData(data.segments || []);
+        setCurrentNotebook({ ...notebook, manifestUrl });
+        setShowPlayer(true);
+        setTimeout(() => setIsSubtitleOpen(true), 80);
+      } catch (err) {
+        console.error('Error playing public notebook:', err);
+      }
+    },
+    []
+  );
 
   const handleNotesUpdate = (count) => {
     console.log(`Notes updated for ${currentNotebook?.job_id}: ${count} notes`);
@@ -195,33 +219,6 @@ export default function DashboardPage() {
           transition={{ duration: 0.6, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="container mx-auto px-4 md:px-6 py-8"
         >
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            className="flex justify-between items-center mb-6"
-          >
-            <h2 className="text-2xl md:text-3xl font-bold text-white">
-              Your Notebooks
-            </h2>
-
-            {notebooks.length > 0 && (
-              <span className={`text-xs px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all duration-300 border ${connectionStatus === 'sse'
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                : connectionStatus === 'polling'
-                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                  : 'bg-neutral-800 text-neutral-500 border-neutral-700'
-                }`}>
-                {connectionStatus === 'sse' && <span className="w-2 h-2 bg-emerald-400 rounded-lg animate-pulse" />}
-                {connectionStatus === 'polling' && <span className="w-2 h-2 bg-amber-400 rounded-lg" />}
-                {connectionStatus === 'disconnected' && <span className="w-2 h-2 bg-neutral-500 rounded-lg" />}
-                <span className="font-medium">
-                  {connectionStatus === 'sse' ? 'Live Updates' : connectionStatus === 'polling' ? 'Polling' : 'Offline'}
-                </span>
-              </span>
-            )}
-          </motion.div>
-
           {loading ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -237,62 +234,67 @@ export default function DashboardPage() {
                 {connectionStatus === 'sse' ? 'Connecting for live updates...' : 'Fetching your audiobooks...'}
               </p>
             </motion.div>
-          ) : notebooks.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="rounded-xl p-12 text-center max-w-2xl mx-auto border border-white/[0.08]"
-              style={{ background: '#111111' }}
-            >
-              <motion.div
-                animate={{ y: [0, -10, 0] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                className="inline-flex items-center justify-center w-20 h-20 rounded-lg bg-white/[0.05] mb-6"
-              >
-                <FilePlus className="w-10 h-10 text-neutral-400" />
-              </motion.div>
-              <h3 className="text-2xl font-bold text-white mb-3">No notebooks yet</h3>
-              <p className="text-neutral-500 mb-6 max-w-md mx-auto">
-                Create your first notebook to start converting documents into audiobooks with AI-powered text-to-speech.
-              </p>
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleNewNotebookClick}
-                className="bg-white text-black px-8 py-3 rounded-lg font-bold hover:opacity-90 transition-opacity"
-              >
-                Create Your First Notebook
-              </motion.button>
-            </motion.div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-              {notebooks.map((nb, i) => (
-                <motion.div
-                  key={nb.job_id}
-                  initial={{ opacity: 0, y: 50, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    duration: 0.5,
-                    delay: Math.min(0.1 * i, 0.5),
-                    ease: [0.16, 1, 0.3, 1]
-                  }}
-                  whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                >
-                  <NotebookCard
-                    title={nb.title}
-                    voice={nb.voice}
-                    status={nb.status}
-                    createdAt={nb.created_at}
-                    notesCount={nb.notesCount}
-                    userId={nb.user_id}
-                    jobId={nb.job_id}
-                    getToken={getToken}
-                    sourceUrl={nb.source_url}
-                    onOpen={() => playNotebook(nb)}
-                    onDelete={() => deleteNotebook(nb.job_id)}
-                  />
-                </motion.div>
-              ))}
+            <div className="flex flex-col gap-12">
+              {/* Personal Notebooks Section */}
+              {notebooks.length > 0 && (
+                <div className="flex flex-col gap-6">
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.5, delay: 0.1 }}
+                    className="flex justify-between items-center"
+                  >
+                    <h2 className="text-2xl md:text-3xl font-bold text-white">
+                      Your Notebooks
+                    </h2>
+                  </motion.div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                    {notebooks.map((nb, i) => (
+                      <motion.div
+                        key={nb.job_id}
+                        initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{
+                          duration: 0.5,
+                          delay: Math.min(0.1 * i, 0.5),
+                          ease: [0.16, 1, 0.3, 1]
+                        }}
+                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
+                      >
+                        <NotebookCard
+                          title={nb.title}
+                          voice={nb.voice}
+                          status={nb.status}
+                          createdAt={nb.created_at}
+                          notesCount={nb.notesCount}
+                          userId={nb.user_id}
+                          jobId={nb.job_id}
+                          getToken={getToken}
+                          sourceUrl={nb.source_url}
+                          onOpen={() => playNotebook(nb)}
+                          onDelete={() => deleteNotebook(nb.job_id)}
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Free Audiobooks Section */}
+              <div className="flex flex-col gap-6">
+                <FreeAudiobooksSection
+                  getToken={getToken}
+                  onPlay={playPublicNotebook}
+                  title={notebooks.length === 0 ? "Start with Free Audiobooks" : "Free Audiobooks"}
+                  description={notebooks.length === 0
+                    ? "Welcome! Try one of these free audiobooks while you wait for your first upload."
+                    : "Explore our collection of public audiobooks."
+                  }
+                  defaultCollapsed={notebooks.length > 0}
+                />
+              </div>
             </div>
           )}
         </motion.div>
