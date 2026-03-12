@@ -268,11 +268,9 @@ def finalize_manifest(user_id, job_id, voice):
         update_job_status_with_tokens(job_id, "completed", total_tokens)
         s3.delete_object(Bucket="ttsfiles", Key=f"{voice_prefix}/manifest_data.json")
         
-        # Finalize internal progress
-        redis_client.hset(f"job:{job_id}", "completed_chunks", audio_meta[len(audio_meta)-1]["index"] + 1 if audio_meta else 0)
     except Exception as e:
         logger.error(f"finalize_manifest error: {e}")
-        update_job_status(job_id, "failed")
+        update_db_status(job_id, "failed")
 
 # --- Actors: System Jobs ---
 

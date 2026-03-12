@@ -23,7 +23,7 @@ import { useUsage } from '../../hooks/useUsage';
 
 
 export default function DashboardPage() {
-  const { isSignedIn, getToken, userId } = useAuth();
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
 
   const {
     notebooks,
@@ -31,7 +31,7 @@ export default function DashboardPage() {
     loading,
     connectionStatus,
     refresh
-  } = useNotebookStatus(userId, getToken);
+  } = useNotebookStatus(userId, getToken, isLoaded);
 
   const { refresh: refetchUsage } = useUsage(isSignedIn ? getToken : null);
 
@@ -219,85 +219,78 @@ export default function DashboardPage() {
           transition={{ duration: 0.6, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="container mx-auto px-4 md:px-6 py-8"
         >
-          {loading ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="rounded-xl p-12 text-center max-w-2xl mx-auto border border-white/[0.08]"
-              style={{ background: '#111111' }}
-            >
-              <div className="inline-flex items-center justify-center w-20 h-20 rounded-lg bg-white/[0.05] mb-6">
-                <div className="w-10 h-10 border-4 border-neutral-700 border-t-white rounded-lg animate-spin" />
-              </div>
-              <h3 className="text-2xl font-bold text-white mb-3">Loading your notebooks...</h3>
-              <p className="text-neutral-500">
-                {connectionStatus === 'sse' ? 'Connecting for live updates...' : 'Fetching your audiobooks...'}
-              </p>
-            </motion.div>
-          ) : (
-            <div className="flex flex-col gap-12">
-              {/* Personal Notebooks Section */}
-              {notebooks.length > 0 && (
-                <div className="flex flex-col gap-6">
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5, delay: 0.1 }}
-                    className="flex justify-between items-center"
-                  >
-                    <h2 className="text-2xl md:text-3xl font-bold text-white">
-                      Your Notebooks
-                    </h2>
-                  </motion.div>
+          <div className="flex flex-col gap-12">
+            {/* Personal Notebooks Section */}
+            <div className="flex flex-col gap-6">
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+                className="flex justify-between items-center"
+              >
+                <h2 className="text-2xl md:text-3xl font-bold text-white">
+                  Your Notebooks
+                </h2>
+              </motion.div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                    {notebooks.map((nb, i) => (
-                      <motion.div
-                        key={nb.job_id}
-                        initial={{ opacity: 0, y: 50, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        transition={{
-                          duration: 0.5,
-                          delay: Math.min(0.1 * i, 0.5),
-                          ease: [0.16, 1, 0.3, 1]
-                        }}
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                      >
-                        <NotebookCard
-                          title={nb.title}
-                          voice={nb.voice}
-                          status={nb.status}
-                          progress_percent={nb.progress_percent}
-                          createdAt={nb.created_at}
-                          notesCount={nb.notesCount}
-                          userId={nb.user_id}
-                          jobId={nb.job_id}
-                          getToken={getToken}
-                          sourceUrl={nb.source_url}
-                          onOpen={() => playNotebook(nb)}
-                          onDelete={() => deleteNotebook(nb.job_id)}
-                        />
-                      </motion.div>
-                    ))}
-                  </div>
+              {loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-64 rounded-xl bg-white/[0.03] animate-pulse border border-white/[0.05]" />
+                  ))}
+                </div>
+              ) : notebooks.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                  {notebooks.map((nb, i) => (
+                    <motion.div
+                      key={nb.job_id}
+                      initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{
+                        duration: 0.5,
+                        delay: Math.min(0.1 * i, 0.5),
+                        ease: [0.16, 1, 0.3, 1]
+                      }}
+                      whileHover={{ y: -4, transition: { duration: 0.2 } }}
+                    >
+                      <NotebookCard
+                        title={nb.title}
+                        voice={nb.voice}
+                        status={nb.status}
+                        progress_percent={nb.progress_percent}
+                        createdAt={nb.created_at}
+                        notesCount={nb.notesCount}
+                        userId={nb.user_id}
+                        jobId={nb.job_id}
+                        getToken={getToken}
+                        sourceUrl={nb.source_url}
+                        onOpen={() => playNotebook(nb)}
+                        onDelete={() => deleteNotebook(nb.job_id)}
+                      />
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-neutral-500 py-12 text-center border border-dashed border-white/10 rounded-xl">
+                  No notebooks found. Upload your first one to get started.
                 </div>
               )}
-
-              {/* Free Audiobooks Section */}
-              <div className="flex flex-col gap-6">
-                <FreeAudiobooksSection
-                  getToken={getToken}
-                  onPlay={playPublicNotebook}
-                  title={notebooks.length === 0 ? "Start with Free Audiobooks" : "Free Audiobooks"}
-                  description={notebooks.length === 0
-                    ? "Welcome! Try one of these free audiobooks while you wait for your first upload."
-                    : "Explore our collection of public audiobooks."
-                  }
-                  defaultCollapsed={notebooks.length > 0}
-                />
-              </div>
             </div>
-          )}
+
+            {/* Free Audiobooks Section */}
+            <div className="flex flex-col gap-6">
+              <FreeAudiobooksSection
+                getToken={getToken}
+                onPlay={playPublicNotebook}
+                title={notebooks.length === 0 ? "Start with Free Audiobooks" : "Free Audiobooks"}
+                description={notebooks.length === 0
+                  ? "Welcome! Try one of these free audiobooks while you wait for your first upload."
+                  : "Explore our collection of public audiobooks."
+                }
+                defaultCollapsed={notebooks.length > 0}
+              />
+            </div>
+          </div>
         </motion.div>
       </main>
 

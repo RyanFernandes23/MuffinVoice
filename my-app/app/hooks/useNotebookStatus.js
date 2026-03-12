@@ -13,7 +13,7 @@ const API_BASE_URL = typeof window !== 'undefined'
  * @param {function} getToken - Function to get auth token
  * @returns {Object} { notebooks, activeNotebooks, loading, connectionStatus, refresh }
  */
-export function useNotebookStatus(userId, getToken) {
+export function useNotebookStatus(userId, getToken, isLoaded) {
   const [notebooks, setNotebooks] = useState([]);
   const [activeNotebooks, setActiveNotebooks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,13 +31,21 @@ export function useNotebookStatus(userId, getToken) {
     if (!userId || !getToken) return [];
 
     for (let i = 0; i < attempts; i++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
       try {
         const token = await getToken();
+        if (!isMountedRef.current) return [];
+
         const response = await fetch(`${API_BASE_URL}/api/notebooks`, {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
+          signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         if (response.ok) {
           const data = await response.json();
@@ -52,8 +60,14 @@ export function useNotebookStatus(userId, getToken) {
 
         return [];
       } catch (error) {
-        console.error('Error fetching notebooks:', error);
-        if (i < attempts - 1) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          console.error('Fetch all notebooks timed out');
+        } else {
+          console.error('Error fetching notebooks:', error);
+        }
+
+        if (i < attempts - 1 && isMountedRef.current) {
           await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
           continue;
         }
@@ -154,45 +168,58 @@ export function useNotebookStatus(userId, getToken) {
   useEffect(() => {
     isMountedRef.current = true;
 
+    // 1. Wait until Clerk is loaded
+    if (!isLoaded) {
+      return;
+    }
+
+    // 2. Handle guest/unauthenticated state
     if (!userId) {
+      setLoading(false);
+      setNotebooks([]);
+      setConnectionStatus('disconnected');
       return;
     }
 
     const init = async () => {
-      // Check and clean up any stale jobs before fetching lists
-      try {
-        const token = await getToken();
-        const response = await fetch(`${API_BASE_URL}/api/cleanup_stale_jobs`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.cleaned > 0) {
-            console.log(`Auto-cleaned ${data.cleaned} stale notebook(s).`);
+      // 1. Start fetching immediately
+      const fetchPromise = fetchAllNotebooks(3);
+
+      // 2. Background cleanup - DO NOT await this
+      (async () => {
+        try {
+          const token = await getToken();
+          const cleanupController = new AbortController();
+          const cleanupTimeoutId = setTimeout(() => cleanupController.abort(), 5000);
+
+          const response = await fetch(`${API_BASE_URL}/api/cleanup_stale_jobs`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: cleanupController.signal
+          });
+
+          clearTimeout(cleanupTimeoutId);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.cleaned > 0) console.log(`Auto-cleaned ${data.cleaned} stale notebook(s).`);
           }
+        } catch (err) {
+          console.error('Background cleanup failed or timed out:', err);
         }
-      } catch (err) {
-        console.error('Failed to auto-clean stale notebooks:', err);
-      }
+      })();
 
-      // Initial fetch to get all notebooks - this now includes 3 retry attempts
-      const allNotebooks = await fetchAllNotebooks(3);
+      // 3. Handle initial fetch results
+      const allNotebooks = await fetchPromise;
+      if (!isMountedRef.current) return;
+
       setNotebooks(allNotebooks);
-
       const active = allNotebooks.filter(nb => nb.status === 'queued' || nb.status === 'processing');
       setActiveNotebooks(active);
-
-      // We should always clear loading state now that we've tried (and possibly retried)
       setLoading(false);
 
       if (active.length > 0) {
         startPolling();
       } else {
-        // No active notebooks, do not poll
-        setLoading(false);
         setConnectionStatus('disconnected');
       }
     };
