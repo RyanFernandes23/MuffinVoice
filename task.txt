@@ -39,4 +39,7 @@ cd my-app && npm run dev
 
 dramatiq src.TTS_Workers.tasks
 
+uv run dramatiq src.workers.chunker_tasks src.workers.tts_tasks
+uv run dramatiq src.workers.worker
+
 uvicorn src.api.main:app --reload

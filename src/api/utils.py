@@ -104,6 +104,29 @@ def get_job_status(job_id: str):
     job_status = redis_client.hgetall(f"job:{job_id}")
     if not job_status:
         return {}
+    
+    # Calculate progress percentage
+    status = job_status.get(b"status", b"unknown").decode("utf-8")
+    progress = 0
+    
+    if status == "completed":
+        progress = 100
+    elif status == "failed":
+        progress = 0 # Or maintain last progress? Plan said 0 or no change.
+    elif status == "queued":
+        progress = 0
+    elif status == "processing":
+        total = int(job_status.get(b"total_chunks", 0))
+        completed = int(job_status.get(b"completed_chunks", 0))
+        
+        if total > 0:
+            # TTS Phase: 15% to 90%
+            progress = 15 + int((completed / total) * 75)
+        else:
+            # Pre-TTS Phase: 5% to 15%
+            progress = 10
+            
+    job_status[b"progress_percent"] = str(progress).encode("utf-8")
     return job_status
 
 

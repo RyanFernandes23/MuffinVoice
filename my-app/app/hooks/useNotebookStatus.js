@@ -22,7 +22,7 @@ export function useNotebookStatus(userId, getToken) {
   const pollingIntervalRef = useRef(null);
   const isMountedRef = useRef(true);
 
-  const POLLING_INTERVAL = 5000; // 5 seconds
+  const POLLING_INTERVAL = 3000; // 3 seconds (was 5s) for more responsive progress bars
 
   /**
    * Fetch all notebooks with retry logic for auth race conditions

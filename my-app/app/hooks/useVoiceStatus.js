@@ -22,7 +22,7 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
   const pollingIntervalRef = useRef(null);
   const isMountedRef = useRef(true);
 
-  const POLLING_INTERVAL = 5000; // 5 seconds
+  const POLLING_INTERVAL = 3000; // 3 seconds (was 5s) for smoother progress updates
 
   const formatVoiceName = useCallback((voiceName) => {
     const parts = voiceName.split('_');
@@ -35,8 +35,14 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
     return voiceName.charAt(0).toUpperCase() + voiceName.slice(1);
   }, []);
 
+  const [progress, setProgress] = useState(0);
+
   const handleVoiceData = useCallback((data) => {
     if (!data || !data.voices) return;
+
+    if (data.progress_percent !== undefined) {
+      setProgress(data.progress_percent);
+    }
 
     const mappedVoices = data.voices.map(voice => ({
       id: voice.name,
@@ -113,6 +119,7 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
 
   return {
     voices,
+    progress,
     loadingVoices: connectionStatus === 'disconnected' ? true : loadingVoices,
     connectionStatus,
   };

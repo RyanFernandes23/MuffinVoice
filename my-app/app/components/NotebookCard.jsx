@@ -27,6 +27,7 @@ export default function NotebookCard({
   jobId,
   getToken,
   sourceUrl,
+  progress_percent = 0,
   onOpen,
   onDelete,
   isDemo = false,
@@ -64,7 +65,7 @@ export default function NotebookCard({
     },
     processing: {
       icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />,
-      label: 'Processing',
+      label: progress_percent > 0 ? `Processing ${progress_percent}%` : 'Processing',
       style: 'bg-amber-500/10 text-amber-400 border-amber-500/20'
     },
     queued: {
@@ -95,6 +96,18 @@ export default function NotebookCard({
       `}
       style={{ background: '#111111' }}
     >
+      {/* Progress Bar (at the very top of the card) */}
+      {isProcessing && progress_percent > 0 && (
+        <div className="absolute top-0 left-0 right-0 h-1 overflow-hidden rounded-t-xl bg-white/5">
+          <motion.div
+            className="h-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+            initial={{ width: 0 }}
+            animate={{ width: `${progress_percent}%` }}
+            transition={{ type: "spring", damping: 20, stiffness: 50 }}
+          />
+        </div>
+      )}
+
       {/* Status Badge */}
       <div className="flex items-center justify-between mb-4">
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border ${currentStatus.style}`}>

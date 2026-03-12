@@ -12,7 +12,7 @@ from src.api.routers.payment import router as payment_router
 from src.api.routers.usage import router as usage_router
 from src.api.routers.webhooks import webhooks_router  # Add this line
 from src.api.utils import create_db_and_tables
-from src.api.jobs import schedule_monthly_reset, schedule_daily_checks
+from src.workers.worker import schedule_monthly_reset, schedule_daily_checks
 
 load_dotenv()
 

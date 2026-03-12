@@ -267,6 +267,7 @@ export default function DashboardPage() {
                           title={nb.title}
                           voice={nb.voice}
                           status={nb.status}
+                          progress_percent={nb.progress_percent}
                           createdAt={nb.created_at}
                           notesCount={nb.notesCount}
                           userId={nb.user_id}

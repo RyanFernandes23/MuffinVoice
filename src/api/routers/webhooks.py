@@ -13,7 +13,7 @@ from ..config import settings
 from ..utils import get_session
 from ..schema import User, PaymentEvent, Plan, Notebook, Subscription, DeletedUser
 from src.utils.payment_client import cancel_razorpay_subscription
-from src.workers.tts_tasks import get_s3_client
+from src.workers.worker import get_s3_client
 from src.utils.RedisClient import redis_client
 
 webhooks_router = APIRouter(

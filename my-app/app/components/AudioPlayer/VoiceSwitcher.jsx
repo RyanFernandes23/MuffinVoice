@@ -15,7 +15,7 @@ export default function VoiceSwitcher({
     setIsOpen,
     innerRef
 }) {
-    const { voices, loadingVoices, connectionStatus } = useVoiceStatus(
+    const { voices, progress, loadingVoices, connectionStatus } = useVoiceStatus(
         userId, jobId, getToken, isOpen
     );
 
@@ -96,7 +96,7 @@ export default function VoiceSwitcher({
                                                 whileTap={{ scale: 0.98 }}
                                                 onClick={() => onVoiceSelect(voice.id, voice.status)}
                                                 disabled={effectiveStatus === 'processing'}
-                                                className={`w-full px-3 py-2.5 rounded-lg text-sm flex justify-between items-center transition-all duration-200 ${effectiveStatus === 'processing'
+                                                className={`w-full px-3 py-2.5 rounded-lg text-sm flex justify-between items-center transition-all duration-200 relative overflow-hidden ${effectiveStatus === 'processing'
                                                     ? 'bg-amber-500/5 text-amber-200 cursor-wait border border-amber-500/10'
                                                     : effectiveStatus === 'not started'
                                                         ? 'bg-white/[0.04] text-neutral-300 hover:text-white cursor-pointer border border-white/[0.05]'
@@ -105,15 +105,25 @@ export default function VoiceSwitcher({
                                                             : 'bg-white/[0.04] text-neutral-300 hover:text-white border border-white/[0.05]'
                                                     }`}
                                             >
-                                                <span className="flex items-center gap-2">
+                                                {/* Background Progress Bar (only for processing) */}
+                                                {effectiveStatus === 'processing' && progress > 0 && (
+                                                    <motion.div
+                                                        className="absolute inset-0 bg-amber-500/10 z-0"
+                                                        initial={{ width: 0 }}
+                                                        animate={{ width: `${progress}%` }}
+                                                        transition={{ type: "spring", damping: 20, stiffness: 50 }}
+                                                    />
+                                                )}
+
+                                                <span className="flex items-center gap-2 z-10">
                                                     <span className={`w-1.5 h-1.5 rounded-full ${selectedVoice === voice.id ? 'bg-black' : 'bg-white/20'}`} />
                                                     {voice.name}
                                                 </span>
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-tighter ${selectedVoice === voice.id && effectiveStatus !== 'not started' && effectiveStatus !== 'processing'
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-tighter z-10 ${selectedVoice === voice.id && effectiveStatus !== 'not started' && effectiveStatus !== 'processing'
                                                     ? 'bg-black/10 text-black'
                                                     : getStatusBg(effectiveStatus) + ' ' + getStatusColor(effectiveStatus)
                                                     }`}>
-                                                    {effectiveStatus}
+                                                    {effectiveStatus === 'processing' && progress > 0 ? `${progress}%` : effectiveStatus}
                                                 </span>
                                             </motion.button>
                                         );

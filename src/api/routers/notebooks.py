@@ -48,9 +48,8 @@ from src.api.utils import (
     sanitize_display_filename,
     set_job_status,
 )
-from src.workers.chunker_tasks import process_file_task
+from src.workers.worker import process_file_task, get_s3_client, process_speeches
 from src.TextExtractor.web_extractor import WebpageExtractor
-from src.workers.tts_tasks import get_s3_client, process_speeches
 from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(prefix="/api", tags=["notebooks", "tts", "s3"])
@@ -569,11 +568,14 @@ async def delete_notebook(
 
 @notebooks_router.get("/job_status/{job_id}")
 async def job_status(job_id: str, _=Depends(clerk_auth)):
-    data = get_job_status(job_id)
-    if not data:
+    status_data = get_job_status(job_id)
+    if not status_data:
         logger.warning(f"Job ID {job_id} not found.")
         raise HTTPException(status_code=404, detail="Job ID not found.")
-    return data
+    
+    # Convert redis bytes to strings for JSON serializability
+    result = {k.decode("utf-8") if isinstance(k, bytes) else k: v.decode("utf-8") if isinstance(v, bytes) else v for k, v in status_data.items()}
+    return result
 
 
 @notebooks_router.get("/stream/{user_id}/{job_id}/{voice}/manifest.m3u8")
@@ -823,10 +825,14 @@ async def check_voice_status(
 
             voices_status.append({"name": voice, "status": status})
 
-        logger.info(
-            f"Voice status check for job {job_id}: {len(voices_status)} voices found"
-        )
-        return {"job_id": job_id, "job_status": job_status, "voices": voices_status}
+        progress_percent = int(get_job_status(job_id).get(b"progress_percent", b"0").decode("utf-8"))
+        
+        return {
+            "job_id": job_id, 
+            "job_status": job_status, 
+            "progress_percent": progress_percent,
+            "voices": voices_status
+        }
 
     except HTTPException:
         raise
@@ -986,6 +992,7 @@ async def check_job_statuses(
                 "status": nb.status,
                 "created_at": nb.created_at.isoformat() if nb.created_at else None,
                 "tokens_used": nb.tokens_used,
+                "progress_percent": int(get_job_status(nb.job_id).get(b"progress_percent", b"0").decode("utf-8")),
             }
             for nb in notebooks
         ]
