@@ -7,7 +7,7 @@ from sqlalchemy import Column, JSON, ForeignKey, Index
 from sqlmodel import Field, Session, SQLModel, create_engine, select, Relationship
 
 
-class Notebook(SQLModel, table=True):
+class NotebookBase(SQLModel):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(index=True, foreign_key="user.user_id")
     job_id: str = Field(unique=True, index=True)
@@ -21,9 +21,16 @@ class Notebook(SQLModel, table=True):
         default=None, max_length=2048
     )  # Store webpage source URL
     is_public: bool = Field(default=False)
-    
+
+
+class Notebook(NotebookBase, table=True):
     user: Optional["User"] = Relationship(back_populates="notebooks")
     notes: List["Note"] = Relationship(back_populates="notebook", cascade_delete=True)
+
+
+class NotebookRead(NotebookBase):
+    """Schema for API responses including real-time progress"""
+    progress_percent: int = 0
 
 
 class Note(SQLModel, table=True):

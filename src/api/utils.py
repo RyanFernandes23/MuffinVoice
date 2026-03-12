@@ -4,7 +4,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -100,34 +100,47 @@ def set_job_status(job_id: str, status: str, extra: Optional[dict] = None):
     pass
 
 
+def calculate_progress(job_status: dict) -> int:
+    """Helper to calculate percentage from Redis job data"""
+    status = job_status.get("status", "unknown")
+    if status == "completed": return 100
+    if status in ["failed", "queued"]: return 0
+    
+    if status == "processing":
+        total = int(job_status.get("total_chunks", 0))
+        completed = int(job_status.get("completed_chunks", 0))
+        if total > 0:
+            return 15 + int((completed / total) * 75)
+        return 10
+    return 0
+
 def get_job_status(job_id: str):
     job_status = redis_client.hgetall(f"job:{job_id}")
     if not job_status:
         return {}
     
-    # Calculate progress percentage
-    status = job_status.get(b"status", b"unknown").decode("utf-8")
-    progress = 0
-    
-    if status == "completed":
-        progress = 100
-    elif status == "failed":
-        progress = 0 # Or maintain last progress? Plan said 0 or no change.
-    elif status == "queued":
-        progress = 0
-    elif status == "processing":
-        total = int(job_status.get(b"total_chunks", 0))
-        completed = int(job_status.get(b"completed_chunks", 0))
-        
-        if total > 0:
-            # TTS Phase: 15% to 90%
-            progress = 15 + int((completed / total) * 75)
-        else:
-            # Pre-TTS Phase: 5% to 15%
-            progress = 10
-            
-    job_status[b"progress_percent"] = str(progress).encode("utf-8")
+    progress = calculate_progress(job_status)
+    job_status["progress_percent"] = str(progress)
     return job_status
+
+def get_batch_job_statuses(job_ids: List[str]) -> Dict[str, dict]:
+    """Scalable approach: Batch fetch all job statuses in ONE Redis round-trip"""
+    if not job_ids: return {}
+    
+    pipe = redis_client.pipeline()
+    for jid in job_ids:
+        pipe.hgetall(f"job:{jid}")
+    
+    raw_results = pipe.execute()
+    
+    enriched = {}
+    for jid, job_status in zip(job_ids, raw_results):
+        if job_status:
+            job_status["progress_percent"] = str(calculate_progress(job_status))
+            enriched[jid] = job_status
+        else:
+            enriched[jid] = {}
+    return enriched
 
 
 def create_db_and_tables():

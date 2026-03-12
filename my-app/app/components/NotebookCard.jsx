@@ -174,7 +174,7 @@ export default function NotebookCard({
         ) : (
           <div className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-neutral-800 text-neutral-500 cursor-not-allowed border border-white/[0.06]">
             {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {isProcessing ? 'Processing...' : 'Unavailable'}
+            {isProcessing ? (progress_percent > 0 ? `Processing ${progress_percent}%` : 'Processing...') : 'Unavailable'}
           </div>
         )}
 

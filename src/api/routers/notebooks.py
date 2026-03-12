@@ -35,7 +35,7 @@ from src.api.deps import (
     get_current_admin,
     logger,
 )
-from src.api.schema import Note, Notebook
+from src.api.schema import Note, Notebook, NotebookRead
 from src.api.token_utils import refund_tokens
 from src.api.utils import (
     calculate_text_tokens,
@@ -43,6 +43,7 @@ from src.api.utils import (
     deduct_tokens,
     engine,
     get_job_status,
+    get_batch_job_statuses,
     get_session,
     get_unique_notebook_title,
     sanitize_display_filename,
@@ -394,7 +395,7 @@ async def upload_text(
     }
 
 
-@notebooks_router.get("/notebooks", response_model=List[Notebook])
+@notebooks_router.get("/notebooks", response_model=List[NotebookRead])
 async def get_my_notebooks(
     token_payload=Depends(clerk_auth), session: Session = Depends(get_session)
 ):
@@ -404,7 +405,23 @@ async def get_my_notebooks(
         .where(Notebook.user_id == user_id)
         .order_by(desc(Notebook.created_at))
     )
-    return session.exec(statement).all()
+    notebooks = session.exec(statement).all()
+    # Scalable Enrichment: Batch fetch all statuses in ONE Redis round-trip
+    job_ids = [nb.job_id for nb in notebooks]
+    all_job_stats = get_batch_job_statuses(job_ids)
+    
+    result = []
+    for nb in notebooks:
+        nb_read = NotebookRead.model_validate(nb)
+        job_info = all_job_stats.get(nb.job_id, {})
+        
+        if job_info:
+            nb_read.progress_percent = int(job_info.get("progress_percent", 0))
+            if job_info.get("status"):
+                nb_read.status = job_info["status"]
+                
+        result.append(nb_read)
+    return result
 
 
 @notebooks_router.get("/public_notebooks", response_model=List[Notebook])
@@ -825,7 +842,7 @@ async def check_voice_status(
 
             voices_status.append({"name": voice, "status": status})
 
-        progress_percent = int(get_job_status(job_id).get(b"progress_percent", b"0").decode("utf-8"))
+        progress_percent = int(get_job_status(job_id).get("progress_percent", "0"))
         
         return {
             "job_id": job_id, 
@@ -974,31 +991,38 @@ async def check_job_statuses(
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if not request.job_ids:
-        return {"notebooks": []}
-
     statement = select(Notebook).where(
         Notebook.user_id == user_id,
         Notebook.job_id.in_(request.job_ids)
     )
     notebooks = session.exec(statement).all()
+    # Scalable Enrichment: Batch fetch statuses for all requested job IDs
+    all_job_stats = get_batch_job_statuses([nb.job_id for nb in notebooks])
+    
+    response_data = []
+    for nb in notebooks:
+        job_info = all_job_stats.get(nb.job_id, {})
+        
+        item = {
+            "user_id": nb.user_id,
+            "job_id": nb.job_id,
+            "title": nb.title,
+            "voice": nb.voice,
+            "status": nb.status,
+            "created_at": nb.created_at.isoformat() if nb.created_at else None,
+            "tokens_used": nb.tokens_used,
+            "source_url": nb.source_url,
+            "progress_percent": 0
+        }
+        
+        if job_info:
+            item["progress_percent"] = int(job_info.get("progress_percent", 0))
+            if job_info.get("status"):
+                item["status"] = job_info["status"]
+                
+        response_data.append(item)
 
-    return {
-        "notebooks": [
-            {
-                "user_id": nb.user_id,
-                "job_id": nb.job_id,
-                "title": nb.title,
-                "voice": nb.voice,
-                "status": nb.status,
-                "created_at": nb.created_at.isoformat() if nb.created_at else None,
-                "tokens_used": nb.tokens_used,
-                "source_url": nb.source_url,
-                "progress_percent": int(get_job_status(nb.job_id).get(b"progress_percent", b"0").decode("utf-8")),
-            }
-            for nb in notebooks
-        ]
-    }
+    return {"notebooks": response_data}
 
 
 @notebooks_router.post("/cleanup_stale_jobs")
