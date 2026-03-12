@@ -986,12 +986,14 @@ async def check_job_statuses(
     return {
         "notebooks": [
             {
+                "user_id": nb.user_id,
                 "job_id": nb.job_id,
                 "title": nb.title,
                 "voice": nb.voice,
                 "status": nb.status,
                 "created_at": nb.created_at.isoformat() if nb.created_at else None,
                 "tokens_used": nb.tokens_used,
+                "source_url": nb.source_url,
                 "progress_percent": int(get_job_status(nb.job_id).get(b"progress_percent", b"0").decode("utf-8")),
             }
             for nb in notebooks
