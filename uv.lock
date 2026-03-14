@@ -74,6 +74,7 @@ dependencies = [
     { name = "ftfy" },
     { name = "mutagen" },
     { name = "nltk" },
+    { name = "num2words" },
     { name = "numpy" },
     { name = "odf" },
     { name = "odfpy" },
@@ -112,6 +113,7 @@ requires-dist = [
     { name = "ftfy", specifier = ">=6.3.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "nltk", specifier = ">=3.9.1" },
+    { name = "num2words", specifier = ">=0.5.14" },
     { name = "numpy", specifier = ">=2.4.0" },
     { name = "odf", specifier = ">=0.0.1" },
     { name = "odfpy", specifier = ">=1.4.1" },
@@ -536,6 +538,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
 ]
+
+[[package]]
+name = "docopt"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
 
 [[package]]
 name = "dotenv"
@@ -1172,6 +1180,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f9/76/3a5e4312c19a028770f86fd7c058cf9f4ec4321c6cf7526bab998a5b683c/nltk-3.9.2.tar.gz", hash = "sha256:0f409e9b069ca4177c1903c3e843eef90c7e92992fa4931ae607da6de49e1419", size = 2887629, upload-time = "2025-10-01T07:19:23.764Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/90/81ac364ef94209c100e12579629dc92bf7a709a84af32f8c551b02c07e94/nltk-3.9.2-py3-none-any.whl", hash = "sha256:1e209d2b3009110635ed9709a67a1a3e33a10f799490fa71cf4bec218c11c88a", size = 1513404, upload-time = "2025-10-01T07:19:21.648Z" },
+]
+
+[[package]]
+name = "num2words"
+version = "0.5.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docopt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/58/ad645bd38b4b648eb2fc2ba1b909398e54eb0cbb6a7dbd2b4953e38c9621/num2words-0.5.14.tar.gz", hash = "sha256:b066ec18e56b6616a3b38086b5747daafbaa8868b226a36127e0451c0cf379c6", size = 218213, upload-time = "2024-12-17T20:17:10.191Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/5b/545e9267a1cc080c8a1be2746113a063e34bcdd0f5173fd665a5c13cb234/num2words-0.5.14-py3-none-any.whl", hash = "sha256:1c8e5b00142fc2966fd8d685001e36c4a9911e070d1b120e1beb721fa1edb33d", size = 163525, upload-time = "2024-12-17T20:17:06.074Z" },
 ]
 
 [[package]]
