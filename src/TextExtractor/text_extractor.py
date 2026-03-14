@@ -1,5 +1,6 @@
 import gc
 import os
+import ftfy
 
 import docx
 import pdfplumber
@@ -18,32 +19,34 @@ class TextExtractor:
         try:
             # Skip pandoc for .txt files as it often misidentifies the input format
             if self.extension == ".txt":
-                return self._extract_txt()
-                
-            return pypandoc.convert_file(
-                self.filepath, "plain", extra_args=["--wrap=none"]
-            )
+                text = self._extract_txt()
+            else:
+                text = pypandoc.convert_file(
+                    self.filepath, "plain", extra_args=["--wrap=none"]
+                )
+            return ftfy.fix_text(text)
         except Exception as e:
             print(f"[WARN] Pandoc failed for {self.filepath} → {e}")
-            return self.fallback_extract()
+            return ftfy.fix_text(self.fallback_extract())
 
     def extract_file_large(self, chunk_size=1000000):  # ~1MB chunks for large files
         """Memory-efficient extraction for large files"""
         try:
             if self.extension == ".pdf":
-                return self._extract_pdf_large()
+                text = self._extract_pdf_large()
             elif self.extension == ".txt":
-                return self._extract_txt_large(chunk_size)
+                text = self._extract_txt_large(chunk_size)
             elif self.extension in [".docx", ".doc"]:
-                return self._extract_docx_large()
+                text = self._extract_docx_large()
             else:
                 # For other formats, use existing method but with memory cleanup
-                result = self.extract_file()
+                text = self.extract_file()
                 gc.collect()
-                return result
+            
+            return ftfy.fix_text(text)
         except Exception as e:
             print(f"Large file extraction failed: {e}")
-            return self.fallback_extract()
+            return ftfy.fix_text(self.fallback_extract())
 
     def fallback_extract(self):
         if self.extension == ".pdf":
