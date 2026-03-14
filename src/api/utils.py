@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -80,7 +81,7 @@ def get_unique_notebook_title(
         unique_title = f"{base_name} ({counter}){ext}"
 
 
-def set_job_status(job_id: str, status: str, extra: Optional[dict] = None):
+def set_job_status(job_id: str, status: str, extra: Optional[dict] = None, voice: Optional[str] = None):
     """
     Updates BOTH Redis (for speed/real-time) and SQL (for persistence).
     Also publishes to SSE clients for real-time updates.
@@ -89,15 +90,15 @@ def set_job_status(job_id: str, status: str, extra: Optional[dict] = None):
     data = {"status": status}
     if extra:
         data.update(extra)
-    redis_client.hset(f"job:{job_id}", mapping=data)
-    logger.info(f"DEBUG: Wrote job:{job_id} to Redis with status {status}")
+    
+    # Use voice-specific key if provided
+    redis_key = f"job:{job_id}:{voice}" if voice else f"job:{job_id}"
+    redis_client.hset(redis_key, mapping=data)
+    logger.info(f"DEBUG: Wrote {redis_key} to Redis with status {status}")
 
-    # 2. Sync to SQL
+    # 2. Sync to SQL (Note: SQL status is usually the 'main' notebook status)
     update_db_status(job_id, status)
-    logger.info(f"Job {job_id} status updated to {status}")
-
-    # 3. Pulled SSE publish (now relying on polling)
-    pass
+    logger.info(f"Job {job_id} SQL status updated to {status}")
 
 
 def calculate_progress(job_status: dict) -> int:
@@ -114,8 +115,15 @@ def calculate_progress(job_status: dict) -> int:
         return 10
     return 0
 
-def get_job_status(job_id: str):
-    job_status = redis_client.hgetall(f"job:{job_id}")
+def get_job_status(job_id: str, voice: Optional[str] = None):
+    # Try voice-specific key first if voice is provided
+    redis_key = f"job:{job_id}:{voice}" if voice else f"job:{job_id}"
+    job_status = redis_client.hgetall(redis_key)
+    
+    # Fallback to general key if voice-specific doesn't exist
+    if not job_status and voice:
+        job_status = redis_client.hgetall(f"job:{job_id}")
+        
     if not job_status:
         return {}
     
@@ -123,24 +131,53 @@ def get_job_status(job_id: str):
     job_status["progress_percent"] = str(progress)
     return job_status
 
-def get_batch_job_statuses(job_ids: List[str]) -> Dict[str, dict]:
-    """Scalable approach: Batch fetch all job statuses in ONE Redis round-trip"""
-    if not job_ids: return {}
+def get_batch_job_statuses(job_voice_pairs: List[tuple]) -> Dict[str, dict]:
+    """Scalable approach: Batch fetch multiple job/voice statuses in ONE Redis round-trip"""
+    if not job_voice_pairs: return {}
     
     pipe = redis_client.pipeline()
-    for jid in job_ids:
-        pipe.hgetall(f"job:{jid}")
+    for jid, voice in job_voice_pairs:
+        # Check voice-specific key
+        pipe.hgetall(f"job:{jid}:{voice}")
     
     raw_results = pipe.execute()
     
     enriched = {}
-    for jid, job_status in zip(job_ids, raw_results):
+    for (jid, voice), job_status in zip(job_voice_pairs, raw_results):
+        # Key by jid:voice to prevent collisions
+        key = f"{jid}:{voice}"
+        
+        if not job_status:
+            # Fallback to general job key if voice-specific doesn't exist
+            job_status = redis_client.hgetall(f"job:{jid}")
+            
         if job_status:
             job_status["progress_percent"] = str(calculate_progress(job_status))
-            enriched[jid] = job_status
+            enriched[key] = job_status
         else:
-            enriched[jid] = {}
+            enriched[key] = {}
     return enriched
+
+
+def prune_old_uploads(max_age_hours=6):
+    """Fail-safe: Delete any temporary files in 'uploads' older than max_age_hours."""
+    upload_dir = Path("uploads")
+    if not upload_dir.exists():
+        return
+        
+    now = time.time()
+    count = 0
+    for path in upload_dir.glob("*"):
+        if path.is_file():
+            file_age = now - path.stat().st_mtime
+            if file_age > (max_age_hours * 3600):
+                try:
+                    path.unlink()
+                    count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to prune {path}: {e}")
+    if count > 0:
+        logger.info(f"Pruned {count} old files from uploads folder")
 
 
 def create_db_and_tables():

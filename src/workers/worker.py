@@ -9,10 +9,12 @@ from typing import Optional
 import boto3
 import dramatiq
 import redis
+from src.api.utils import get_user_id_for_job, publish_notebook_status
 from boto3.session import Config
 from dotenv import load_dotenv
 from dramatiq import group
 from dramatiq.middleware import GroupCallbacks
+from dramatiq.rate_limits import ConcurrentRateLimiter
 from dramatiq.rate_limits.backends import RedisBackend as RateLimitRedisBackend
 from dramatiq.results import Results
 from dramatiq.results.backends import RedisBackend
@@ -70,6 +72,34 @@ def get_s3_client():
         )
     return _s3_client
 
+def ensure_s3_lifecycle_policy():
+    """
+    Sets up a Lifecycle Policy on the 'ttsfiles' bucket to automatically 
+    expire (delete) objects in the 'uploads/' prefix after 1 day.
+    This addresses the 'temp file' requirement in production.
+    """
+    s3 = get_s3_client()
+    try:
+        s3.put_bucket_lifecycle_configuration(
+            Bucket="ttsfiles",
+            LifecycleConfiguration={
+                'Rules': [
+                    {
+                        'ID': 'DeleteOldUploads',
+                        'Prefix': 'uploads/',
+                        'Status': 'Enabled',
+                        'Expiration': {'Days': 1}
+                    },
+                ]
+            }
+        )
+        logger.info("[S3-SETUP] Lifecycle policy for 'uploads/' set to 1 day.")
+    except Exception as e:
+        logger.warning(f"[S3-SETUP] Could not set lifecycle policy: {e}. (This may happen if using MinIO or non-AWS S3)")
+
+# Initialize storage policies
+ensure_s3_lifecycle_policy()
+
 # --- DB/Redis Status Helpers ---
 
 def update_db_status(job_id: str, status: str, total_tokens: int = None):
@@ -116,7 +146,6 @@ def update_job_status(job_id, status):
     
     # Optional: Publish to SSE if utility is available
     try:
-        from src.api.utils import get_user_id_for_job, publish_notebook_status
         user_id = get_user_id_for_job(job_id)
         if user_id:
             publish_notebook_status(user_id, job_id, status)
@@ -133,15 +162,26 @@ def update_job_status_with_tokens(job_id, status, total_tokens):
 # --- Actors: Chunker ---
 
 @dramatiq.actor(queue_name="chunking")
-def process_file_task(user_id, job_id, file_path, voice):
+def process_file_task(user_id, job_id, file_path_or_key, voice):
     from src.api.utils import set_job_status
     set_job_status(job_id, "processing")
     c1_chunks = []
     c2_chunks = []
+    local_path = None
     try:
-        logger.info(f"Starting process_file_task for job {job_id} with file {file_path}")
+        s3 = get_s3_client()
+        # Horizontal Scaling: If it looks like an S3 key, download it; else use as local path (fallback)
+        if file_path_or_key.startswith("uploads/"):
+            local_path = Path(f"/tmp/{os.path.basename(file_path_or_key)}")
+            os.makedirs("/tmp", exist_ok=True)
+            s3.download_file("ttsfiles", file_path_or_key, str(local_path))
+            logger.info(f"Downloaded source from S3: {file_path_or_key}")
+        else:
+            local_path = Path(file_path_or_key)
+
+        logger.info(f"Starting process_file_task for job {job_id} with file {local_path}")
         cleaner1 = TTSTextCleaner()
-        extractor = TextExtractor(file_path)
+        extractor = TextExtractor(str(local_path))
         full_text = extractor.extract_file()
         text_chunks = segment_text(full_text)
         for chunk in text_chunks:
@@ -156,23 +196,28 @@ def process_file_task(user_id, job_id, file_path, voice):
                 c1_chunks.append(cleaned_chunk1)
                 c2_chunks.append(cleaned_chunk2)
         
-        s3 = get_s3_client()
         s3_prefix = f"{user_id}/{job_id}"
         s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks_c1.json", Body=json.dumps(c1_chunks).encode("utf-8"), ContentType="application/json")
         s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json", Body=json.dumps(c2_chunks).encode("utf-8"), ContentType="application/json")
         s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/full_text.txt", Body=full_text.encode("utf-8"), ContentType="text/plain")
         
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        
         process_speeches.send(user_id, job_id, voice)
         logger.info(f"Queued process_speeches for job {job_id}")
+
+        # Cleanup original upload from S3 if it was there
+        if file_path_or_key.startswith("uploads/"):
+            try:
+                s3.delete_object(Bucket="ttsfiles", Key=file_path_or_key)
+            except: pass
     except Exception as e:
         set_job_status(job_id, "failed", {"error": str(e)})
         logger.error(f"process_file_task failed for job {job_id}: {e}", exc_info=True)
-        if os.path.exists(file_path):
-            os.remove(file_path)
         raise
+    finally:
+        if local_path and os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+            except: pass
 
 # --- Actors: TTS ---
 
@@ -189,12 +234,16 @@ def process_speeches(user_id, job_id, voice):
         voice_prefix = f"{s3_prefix}/voices/{voice}"
         s3.put_object(Bucket="ttsfiles", Key=f"{voice_prefix}/manifest_data.json", Body=json.dumps([]).encode("utf-8"), ContentType="application/json")
         
-        # Initialize progress counters in Redis
+        # Initialize progress counters in Redis (voice-specific)
         total_chunks = len(chunks)
-        redis_client.hset(f"job:{job_id}", mapping={
+        redis_client.hset(f"job:{job_id}:{voice}", mapping={
             "total_chunks": total_chunks,
-            "completed_chunks": 0
+            "completed_chunks": 0,
+            "status": "processing"
         })
+        
+        # Also ensure the general job entry knows it's processing if needed
+        redis_client.hset(f"job:{job_id}", "status", "processing")
         
         all_messages = [process_single_speech.message(i, chunk, voice, user_id, job_id) for i, chunk in enumerate(chunks)]
         g = group(all_messages)
@@ -206,38 +255,52 @@ def process_speeches(user_id, job_id, voice):
 
 @dramatiq.actor(queue_name="default", store_results=True, max_retries=20, min_backoff=1000)
 def process_single_speech(index, text, voice, user_id, job_id):
-    s3 = get_s3_client()
-    s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
-    try:
-        text = " ".join(map(str, text)) if isinstance(text, list) else str(text)
-        chunk_tokens = calculate_text_tokens(text)
-        audio_data = b""
-        if text.strip():
-            with tts_generator(text, voice) as speech_output:
-                for data in speech_output.iter_bytes():
-                    if data: audio_data += data
-        if not audio_data: return None
-        duration = MP3(BytesIO(audio_data)).info.length
-        s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/speech{index}.mp3", Body=audio_data, ContentType="audio/mpeg")
-        metadata_entry = {"index": index, "filename": f"speech{index}.mp3", "duration": duration, "tokens": chunk_tokens}
-        lock = redis_client.lock(f"lock:manifest:{job_id}:{voice}", timeout=30, blocking_timeout=60)
-        with lock:
-            meta_key = f"{s3_prefix}/manifest_data.json"
-            try:
-                resp = s3.get_object(Bucket="ttsfiles", Key=meta_key)
-                data = json.loads(resp["Body"].read().decode("utf-8"))
-            except s3.exceptions.NoSuchKey:
-                data = []
-            data.append(metadata_entry)
-            s3.put_object(Bucket="ttsfiles", Key=meta_key, Body=json.dumps(data).encode("utf-8"), ContentType="application/json")
-            
-            # Increment progress counter
-            redis_client.hincrby(f"job:{job_id}", "completed_chunks", 1)
-            
-        return metadata_entry
-    except Exception as e:
-        logger.error(f"process_single_speech error: {e}")
-        raise
+    # Production Concurrency Guard: Limit to 5 simultaneous SSL connections per worker
+    # to avoid saturating the local tunnel or the GPU engine.
+    # Uses the shared redis backend configured in middleware.
+    limiter = ConcurrentRateLimiter(rate_limiter_backend, "tts_concurrency", limit=5)
+    with limiter.acquire():
+        # Check if job was cancelled
+        if redis_client.exists(f"cancelled:{job_id}"):
+            logger.info(f"[CANCEL] Job {job_id} task {index} for {voice} skipped (user deleted notebook)")
+            return None
+
+        s3 = get_s3_client()
+        s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
+        try:
+            text = " ".join(map(str, text)) if isinstance(text, list) else str(text)
+            chunk_tokens = calculate_text_tokens(text)
+            audio_data = b""
+            if text.strip():
+                with tts_generator(text, voice) as speech_output:
+                    for data in speech_output.iter_bytes():
+                        if data: audio_data += data
+            if not audio_data: return None
+            duration = MP3(BytesIO(audio_data)).info.length
+            s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/speech{index}.mp3", Body=audio_data, ContentType="audio/mpeg")
+            metadata_entry = {"index": index, "filename": f"speech{index}.mp3", "duration": duration, "tokens": chunk_tokens}
+            lock = redis_client.lock(f"lock:manifest:{job_id}:{voice}", timeout=30, blocking_timeout=60)
+            with lock:
+                meta_key = f"{s3_prefix}/manifest_data.json"
+                try:
+                    resp = s3.get_object(Bucket="ttsfiles", Key=meta_key)
+                    data = json.loads(resp["Body"].read().decode("utf-8"))
+                except s3.exceptions.NoSuchKey:
+                    data = []
+                data.append(metadata_entry)
+                s3.put_object(Bucket="ttsfiles", Key=meta_key, Body=json.dumps(data).encode("utf-8"), ContentType="application/json")
+                
+                # Increment progress counter (voice-specific)
+                redis_client.hincrby(f"job:{job_id}:{voice}", "completed_chunks", 1)
+                
+                # Partial Refund Tracking: Log consumed tokens globally for this job
+                # This allows us to calculate exactly how many tokens were 'used' vs 'wasted' if deleted mid-way
+                redis_client.hincrby(f"job:{job_id}", "consumed_tokens", chunk_tokens)
+                
+            return metadata_entry
+        except Exception as e:
+            logger.error(f"process_single_speech error: {e}")
+            raise
 
 @dramatiq.actor(queue_name="default")
 def finalize_manifest(user_id, job_id, voice):
@@ -271,6 +334,37 @@ def finalize_manifest(user_id, job_id, voice):
     except Exception as e:
         logger.error(f"finalize_manifest error: {e}")
         update_db_status(job_id, "failed")
+
+@dramatiq.actor(queue_name="default", priority=10) # Low priority background job
+def cleanup_notebook_resources(user_id, job_id):
+    """Production-grade background cleanup with pagination and retry safety."""
+    s3 = get_s3_client()
+    s3_prefix = f"{user_id}/{job_id}/"
+    logger.info(f"[CLEANUP] Starting deep cleanup for {job_id}")
+
+    try:
+        # 1. Paginated S3 Deletion (Handles 1000+ objects safely)
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket="ttsfiles", Prefix=s3_prefix):
+            if "Contents" in page:
+                objects = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects})
+                logger.info(f"[CLEANUP] Deleted batch of {len(objects)} objects from S3")
+
+        # 2. Redis Deep Cleanup
+        # We delete everything: job hash, voice status hashes, and manifest locks
+        keys_to_delete = [f"job:{job_id}", f"cancelled:{job_id}"]
+        # Find all keys related to this job using scan (safe for production)
+        for key in redis_client.scan_iter(f"*:{job_id}*"):
+            keys_to_delete.append(key)
+        
+        if keys_to_delete:
+            redis_client.delete(*list(set(keys_to_delete)))
+            logger.info(f"[CLEANUP] Flushed {len(keys_to_delete)} Redis keys")
+
+    except Exception as e:
+        logger.error(f"[CLEANUP] Failed cleanup for {job_id}: {e}")
+        raise # Dramatiq will retry if it fails
 
 # --- Actors: System Jobs ---
 

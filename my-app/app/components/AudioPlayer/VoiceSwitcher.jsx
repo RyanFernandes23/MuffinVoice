@@ -106,11 +106,11 @@ export default function VoiceSwitcher({
                                                     }`}
                                             >
                                                 {/* Background Progress Bar (only for processing) */}
-                                                {effectiveStatus === 'processing' && progress > 0 && (
+                                                {effectiveStatus === 'processing' && voice.progress_percent > 0 && (
                                                     <motion.div
                                                         className="absolute inset-0 bg-amber-500/10 z-0"
                                                         initial={{ width: 0 }}
-                                                        animate={{ width: `${progress}%` }}
+                                                        animate={{ width: `${voice.progress_percent}%` }}
                                                         transition={{ type: "spring", damping: 20, stiffness: 50 }}
                                                     />
                                                 )}
@@ -123,7 +123,7 @@ export default function VoiceSwitcher({
                                                     ? 'bg-black/10 text-black'
                                                     : getStatusBg(effectiveStatus) + ' ' + getStatusColor(effectiveStatus)
                                                     }`}>
-                                                    {effectiveStatus === 'processing' && progress > 0 ? `${progress}%` : effectiveStatus}
+                                                    {effectiveStatus === 'processing' && voice.progress_percent > 0 ? `${voice.progress_percent}%` : effectiveStatus}
                                                 </span>
                                             </motion.button>
                                         );

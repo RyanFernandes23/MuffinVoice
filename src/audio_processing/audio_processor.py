@@ -15,8 +15,8 @@ import httpx
 def _get_client():
     # Configure custom httpx client with retries for transient SSL/Connection errors
     http_client = httpx.Client(
-        transport=httpx.HTTPTransport(retries=3),
-        timeout=httpx.Timeout(60.0, connect=10.0)
+        transport=httpx.HTTPTransport(retries=5),
+        timeout=httpx.Timeout(60.0, connect=20.0)
     )
     return OpenAI(base_url=_TTS_BASE_URL, api_key="not-needed", http_client=http_client)
 

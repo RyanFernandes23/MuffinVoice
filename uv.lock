@@ -71,6 +71,7 @@ dependencies = [
     { name = "dramatiq" },
     { name = "fastapi" },
     { name = "fastapi-clerk-auth" },
+    { name = "ftfy" },
     { name = "mutagen" },
     { name = "nltk" },
     { name = "numpy" },
@@ -83,6 +84,7 @@ dependencies = [
     { name = "pycln" },
     { name = "pydantic-settings" },
     { name = "pypandoc-binary" },
+    { name = "pysbd" },
     { name = "python-docx" },
     { name = "python-multipart" },
     { name = "razorpay" },
@@ -107,6 +109,7 @@ requires-dist = [
     { name = "dramatiq", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.128.0" },
     { name = "fastapi-clerk-auth", specifier = ">=0.0.9" },
+    { name = "ftfy", specifier = ">=6.3.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "nltk", specifier = ">=3.9.1" },
     { name = "numpy", specifier = ">=2.4.0" },
@@ -119,6 +122,7 @@ requires-dist = [
     { name = "pycln", specifier = ">=2.6.0" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "pypandoc-binary", specifier = ">=1.16.2" },
+    { name = "pysbd", specifier = ">=0.3.4" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "python-multipart", specifier = ">=0.0.21" },
     { name = "razorpay", specifier = ">=2.0.0" },
@@ -1791,6 +1795,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/99/8d1ff87b626649400e62a2840e6e10fe258443ba518798e071fee4cd86f9/pypdfium2-5.2.0-py3-none-win32.whl", hash = "sha256:c68067938f617c37e4d17b18de7cac231fc7ce0eb7b6653b7283ebe8764d4999", size = 2990175, upload-time = "2025-12-12T13:20:10.241Z" },
     { url = "https://files.pythonhosted.org/packages/93/fc/114fff8895b620aac4984808e93d01b6d7b93e342a1635fcfe2a5f39cf39/pypdfium2-5.2.0-py3-none-win_amd64.whl", hash = "sha256:eb0591b720e8aaeab9475c66d653655ec1be0464b946f3f48a53922e843f0f3b", size = 3098615, upload-time = "2025-12-12T13:20:11.795Z" },
     { url = "https://files.pythonhosted.org/packages/08/97/eb738bff5998760d6e0cbcb7dd04cbf1a95a97b997fac6d4e57562a58992/pypdfium2-5.2.0-py3-none-win_arm64.whl", hash = "sha256:5dd1ef579f19fa3719aee4959b28bda44b1072405756708b5e83df8806a19521", size = 2939479, upload-time = "2025-12-12T13:20:13.815Z" },
+]
+
+[[package]]
+name = "pysbd"
+version = "0.3.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/0a/c99fb7d7e176f8b176ef19704a32e6a9c6aafdf19ef75a187f701fc15801/pysbd-0.3.4-py3-none-any.whl", hash = "sha256:cd838939b7b0b185fcf86b0baf6636667dfb6e474743beeff878e9f42e022953", size = 71082, upload-time = "2021-02-11T16:36:33.351Z" },
 ]
 
 [[package]]

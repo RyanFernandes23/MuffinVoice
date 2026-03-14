@@ -48,6 +48,7 @@ export function useVoiceStatus(userId, jobId, getToken, enabled) {
       id: voice.name,
       name: formatVoiceName(voice.name),
       status: voice.status,
+      progress_percent: voice.progress_percent || 0,
     }));
 
     setVoices(mappedVoices);

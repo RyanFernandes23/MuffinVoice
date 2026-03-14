@@ -46,10 +46,16 @@ from src.api.utils import (
     get_batch_job_statuses,
     get_session,
     get_unique_notebook_title,
+    prune_old_uploads,
     sanitize_display_filename,
     set_job_status,
 )
-from src.workers.worker import process_file_task, get_s3_client, process_speeches
+from src.workers.worker import (
+    process_file_task, 
+    get_s3_client, 
+    process_speeches, 
+    cleanup_notebook_resources
+)
 from src.TextExtractor.web_extractor import WebpageExtractor
 from src.utils.RedisClient import redis_client
 
@@ -72,6 +78,7 @@ async def upload_file(
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
+    prune_old_uploads() # Fail-safe cleanup
 
     # Sanitize the original filename for display and database storage
     original_filename = file.filename
@@ -125,24 +132,34 @@ async def upload_file(
             status_code=402, detail="Failed to deduct tokens. Please try again."
         )
 
-    # Save file to disk after token check passes
-    with open(temp_path, "wb") as f:
-        f.write(file_content)
+    # Production Scaling: Save file to S3 'uploads/' prefix instead of local disk
+    # This allows any worker in a cluster to pick up the job and ensures statelessness
+    s3 = get_s3_client()
+    s3_key = f"uploads/{job_id}-{safe_disk_filename}"
+    try:
+        s3.put_object(Bucket="ttsfiles", Key=s3_key, Body=file_content)
+        logger.info(f"Uploaded source file to S3: {s3_key}")
+    except Exception as e:
+        logger.error(f"Failed to upload source file to S3: {e}")
+        # Rollback token deduction if possible
+        refund_tokens(session, user_id, estimated_tokens, job_id)
+        raise HTTPException(status_code=500, detail="Storage backend failure")
 
     new_notebook = Notebook(
         user_id=user_id,
         job_id=job_id,
-        title=unique_db_title,  # Use the unique, sanitized title
+        title=unique_db_title,
         voice=voice,
         status="queued",
-        tokens_requested=estimated_tokens,  # Track requested tokens
-        tokens_used=0,  # Will be updated during processing
+        tokens_requested=estimated_tokens,
+        tokens_used=0,
     )
     session.add(new_notebook)
     session.commit()
     set_job_status(job_id, "queued")
 
-    process_file_task.send(user_id, job_id, str(temp_path), voice)
+    # Pass the S3 key instead of a local temp path
+    process_file_task.send(user_id, job_id, s3_key, voice)
 
     logger.info(
         f"File uploaded for user {user_id}, job_id {job_id}, tokens_requested: {estimated_tokens}"
@@ -190,6 +207,7 @@ async def upload_webpage(
 
     upload_dir = Path("uploads")
     upload_dir.mkdir(exist_ok=True)
+    prune_old_uploads() # Fail-safe cleanup
 
     job_id = str(uuid4())
 
@@ -243,8 +261,17 @@ async def upload_webpage(
             status_code=402, detail="Failed to deduct tokens. Please try again."
         )
 
-    # Save extracted text to file
-    temp_path = extractor.save_to_file(extracted_text, str(upload_dir))
+    # Save extracted text to S3 'uploads/' prefix for stateless processing
+    s3 = get_s3_client()
+    s3_key = f"uploads/{job_id}_webpage.txt"
+    try:
+        text_to_save = str(extracted_text).strip()
+        s3.put_object(Bucket="ttsfiles", Key=s3_key, Body=text_to_save.encode("utf-8"))
+        logger.info(f"Uploaded webpage text to S3: {s3_key}")
+    except Exception as e:
+        logger.error(f"Failed to upload webpage text to S3: {e}")
+        refund_tokens(session, user_id, estimated_tokens, job_id)
+        raise HTTPException(status_code=500, detail="Storage backend failure")
 
     # Create title from URL domain
     domain = parsed.netloc.replace("www.", "")
@@ -260,14 +287,13 @@ async def upload_webpage(
         status="queued",
         tokens_requested=estimated_tokens,
         tokens_used=0,
-        source_url=url,  # Store the source URL
+        source_url=url,
     )
     session.add(new_notebook)
     session.commit()
     set_job_status(job_id, "queued")
 
-    # Process the extracted text
-    process_file_task.send(user_id, job_id, str(temp_path), voice)
+    process_file_task.send(user_id, job_id, s3_key, voice)
 
     logger.info(
         f"Webpage uploaded for user {user_id}, job_id {job_id}, url: {url}, tokens_requested: {estimated_tokens}"
@@ -407,13 +433,14 @@ async def get_my_notebooks(
     )
     notebooks = session.exec(statement).all()
     # Scalable Enrichment: Batch fetch all statuses in ONE Redis round-trip
-    job_ids = [nb.job_id for nb in notebooks]
-    all_job_stats = get_batch_job_statuses(job_ids)
+    job_voice_pairs = [(nb.job_id, nb.voice) for nb in notebooks]
+    all_job_stats = get_batch_job_statuses(job_voice_pairs)
     
     result = []
     for nb in notebooks:
         nb_read = NotebookRead.model_validate(nb)
-        job_info = all_job_stats.get(nb.job_id, {})
+        key = f"{nb.job_id}:{nb.voice}"
+        job_info = all_job_stats.get(key, {})
         
         if job_info:
             nb_read.progress_percent = int(job_info.get("progress_percent", 0))
@@ -489,8 +516,8 @@ async def admin_delete_notebook(
     s3 = get_s3_client()
     try:
         # Delete S3 artifacts
-        s3.delete_object(Bucket=AWS_BUCKET_NAME, Key=f"{notebook_user_id}/{job_id}/manifest.m3u8")
-        s3.delete_object(Bucket=AWS_BUCKET_NAME, Key=f"{notebook_user_id}/{job_id}/subtitles.json")
+        s3.delete_object(Bucket="ttsfiles", Key=f"{notebook_user_id}/{job_id}/manifest.m3u8")
+        s3.delete_object(Bucket="ttsfiles", Key=f"{notebook_user_id}/{job_id}/subtitles.json")
     except Exception as e:
         logger.warning(f"Error deleting S3 objects for {job_id}: {e}")
 
@@ -524,61 +551,44 @@ async def delete_notebook(
             detail="Public notebooks cannot be deleted.",
         )
 
-    notebook_user_id = notebook.user_id
-
-    s3 = get_s3_client()
-    s3_prefix = f"{notebook_user_id}/{job_id}/"
+    # 1. STOP PROCESSING: Set cancellation flag immediately
     try:
-        response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
-        if "Contents" in response:
-            objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
-            s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
-            logger.info(
-                f"Deleted {len(objects_to_delete)} objects from S3: {s3_prefix}"
-            )
-        else:
-            logger.info(f"No S3 objects found for prefix: {s3_prefix}")
+        redis_client.setex(f"cancelled:{job_id}", 600, "1")
+        logger.info(f"Cancellation flag set for job: {job_id}")
     except Exception as e:
-        logger.error(f"S3 deletion failed for {s3_prefix}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete files from storage: {str(e)}",
-        )
+        logger.warning(f"Failed to set cancellation flag for {job_id}: {e}")
 
+    # 2. PARTIAL REFUND: Only refund what hasn't been turned into audio yet
+    # This protects us from users deleting a job after listening to most of it
     try:
-        redis_client.delete(f"job:{job_id}")
-        logger.info(f"Deleted Redis key: job:{job_id}")
+        # Get real-time consumed tokens from Redis
+        consumed = redis_client.hget(f"job:{job_id}", "consumed_tokens")
+        consumed_val = int(consumed) if consumed else 0
+        
+        refund_amount = notebook.tokens_requested - consumed_val
+        if refund_amount > 0:
+            refund_tokens(session, user_id, refund_amount, job_id)
+            logger.info(f"[PARTIAL_REFUND] Refunded {refund_amount} tokens for {job_id} (Consumed: {consumed_val})")
     except Exception as e:
-        logger.error(f"Redis deletion failed for job {job_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete job from cache: {str(e)}",
-        )
+        logger.error(f"Partial token refund failed for {job_id}: {e}")
+        # Safe fallback: full refund if tracking fails
+        # refund_tokens(session, user_id, notebook.tokens_requested, job_id)
 
+    # 3. BACKGROUND DEEP CLEANUP: Move slow S3/Redis flushing to a worker
+    # This prevents API timeouts on large notebooks
+    cleanup_notebook_resources.send(user_id, job_id)
+
+    # 4. DATABASE RECORDS: Delete immediately to update UI
     try:
         from sqlmodel import delete
-
-        result = session.execute(delete(Note).where(Note.job_id == job_id))
-        notes_deleted = result.rowcount
-        logger.info(f"Bulk deleted {notes_deleted} notes for job {job_id}")
-    except Exception as e:
-        logger.error(f"Note deletion failed for job {job_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete associated notes: {str(e)}",
-        )
-
-    try:
+        session.execute(delete(Note).where(Note.job_id == job_id))
         session.delete(notebook)
         session.commit()
-        logger.info(f"Deleted notebook {job_id} from database")
+        logger.info(f"UI Clean: Deleted notebook {job_id} from DB")
     except Exception as e:
         session.rollback()
-        logger.error(f"Notebook deletion failed for {job_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete notebook: {str(e)}",
-        )
+        logger.error(f"DB deletion failed for {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Cleanup failed at database level")
 
     return Response(status_code=204)
 
@@ -795,12 +805,8 @@ async def check_voice_status(
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        # Note: job_data is bytes in redis, but get_job_status returns a dict of bytes keys/values
-        job_status = (
-            job_data.get(b"status", b"unknown").decode("utf-8")
-            if job_data
-            else "unknown"
-        )
+        # Note: job_data is used to get the general job status
+        job_status = job_data.get("status", "unknown")
         s3_voices_prefix = f"{user_id}/{job_id}/voices/"
 
         s3 = get_s3_client()
@@ -816,37 +822,44 @@ async def check_voice_status(
                 voice_name = prefix["Prefix"].rstrip("/").split("/")[-1]
                 existing_voices.add(voice_name)
 
-        voices_status = []
+        # Scalable Voice Enrichment: Fetch progress for all available voices in one trip
+        voice_pairs = [(job_id, v) for v in AVAILABLE_VOICES]
+        all_voice_stats = get_batch_job_statuses(voice_pairs)
 
-        # Check status for all available voices
+        voices_status = []
         for voice in AVAILABLE_VOICES:
+            # Use the correctly keyed batch data
+            voice_data = all_voice_stats.get(f"{job_id}:{voice}", {})
+            v_progress = int(voice_data.get("progress_percent", 0))
+            v_status = voice_data.get("status", "not started")
+
             if voice in existing_voices:
-                # Voice folder exists - check if manifest.m3u8 file exists
+                # S3 Check for finality
                 voice_prefix = f"{s3_voices_prefix}{voice}/"
                 manifest_key = f"{voice_prefix}manifest.m3u8"
-
                 try:
-                    # Check if manifest file exists
                     s3.head_object(Bucket="ttsfiles", Key=manifest_key)
-                    # Manifest exists - voice is ready
                     status = "ready"
-                except s3.exceptions.ClientError as e:
-                    if e.response["Error"]["Code"] == "404":
-                        # Folder exists but manifest doesn't - voice is still processing
-                        status = "processing"
-                    else:
-                        status = "processing"
+                    v_progress = 100
+                except:
+                    status = "processing" if v_status == "processing" else "ready"
             else:
-                # Voice folder doesn't exist - not started yet
-                status = "not started"
+                status = "processing" if v_status == "processing" else "not started"
 
-            voices_status.append({"name": voice, "status": status})
+            voices_status.append({
+                "name": voice, 
+                "status": status,
+                "progress_percent": v_progress
+            })
 
-        progress_percent = int(get_job_status(job_id).get("progress_percent", "0"))
+        # Overall job progress (from primary voice or job key)
+        progress_percent = int(job_data.get("progress_percent", "0"))
+        # Fix the bytes/string key bug for job_status
+        job_status_display = job_data.get("status", "unknown")
         
         return {
             "job_id": job_id, 
-            "job_status": job_status, 
+            "job_status": job_status_display, 
             "progress_percent": progress_percent,
             "voices": voices_status
         }
@@ -996,12 +1009,15 @@ async def check_job_statuses(
         Notebook.job_id.in_(request.job_ids)
     )
     notebooks = session.exec(statement).all()
-    # Scalable Enrichment: Batch fetch statuses for all requested job IDs
-    all_job_stats = get_batch_job_statuses([nb.job_id for nb in notebooks])
+    # Scalable Enrichment: Batch fetch statuses for all requested job IDs (main voice)
+    # Note: We should ideally pass the actual voice from the DB results
+    job_voice_pairs = [(nb.job_id, nb.voice) for nb in notebooks]
+    all_job_stats = get_batch_job_statuses(job_voice_pairs)
     
     response_data = []
     for nb in notebooks:
-        job_info = all_job_stats.get(nb.job_id, {})
+        key = f"{nb.job_id}:{nb.voice}"
+        job_info = all_job_stats.get(key, {})
         
         item = {
             "user_id": nb.user_id,

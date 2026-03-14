@@ -1,1 +1,0 @@
-The user's backend expects file uploads with specific parameters and provides endpoints for checking job status and retrieving manifests.
