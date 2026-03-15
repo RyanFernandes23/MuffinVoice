@@ -31,6 +31,7 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
     const [muted, setMutedState] = useState(false);
     const [playbackRate, setPlaybackRateState] = useState(1);
     const [isReady, setIsReady] = useState(false);
+    const [isBuffering, setIsBuffering] = useState(false);
     const [error, setError] = useState(null);
     const [tokenReady, setTokenReady] = useState(false);
 
@@ -205,7 +206,11 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
         const onError = (e) => {
             console.error('[useAudioPlayer] Audio element error:', e);
             setError('Audio playback error');
+            setIsBuffering(false);
         };
+
+        const onWaiting = () => setIsBuffering(true);
+        const onResumed = () => setIsBuffering(false);
 
         audio.addEventListener('timeupdate', onTimeUpdateEvt);
         audio.addEventListener('durationchange', onDurationChangeEvt);
@@ -213,6 +218,10 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
         audio.addEventListener('pause', onPause);
         audio.addEventListener('ended', onEnded);
         audio.addEventListener('error', onError);
+        audio.addEventListener('waiting', onWaiting);
+        audio.addEventListener('playing', onResumed);
+        audio.addEventListener('canplay', onResumed);
+        audio.addEventListener('stalled', onWaiting);
 
         return () => {
             audio.removeEventListener('timeupdate', onTimeUpdateEvt);
@@ -221,6 +230,10 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
             audio.removeEventListener('pause', onPause);
             audio.removeEventListener('ended', onEnded);
             audio.removeEventListener('error', onError);
+            audio.removeEventListener('waiting', onWaiting);
+            audio.removeEventListener('playing', onResumed);
+            audio.removeEventListener('canplay', onResumed);
+            audio.removeEventListener('stalled', onWaiting);
         };
     }, []);
 
@@ -282,6 +295,16 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
         }
     }, []);
 
+    // --- Sync playback rate and volume when source changes ---
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (audio && isReady) {
+            audio.playbackRate = playbackRate;
+            audio.volume = volume;
+            audio.muted = muted;
+        }
+    }, [isReady, playbackRate, volume, muted]);
+
     const setPlaybackRate = useCallback((rate) => {
         if (audioRef.current) {
             audioRef.current.playbackRate = rate;
@@ -312,6 +335,7 @@ export function useAudioPlayer({ src, getToken, onTimeUpdate, onDurationChange, 
         muted,
         playbackRate,
         isReady,
+        isBuffering,
         error,
 
         // Controls

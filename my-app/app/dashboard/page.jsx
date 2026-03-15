@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@clerk/nextjs';
 import { toast } from 'react-hot-toast';
 import { Plus, FilePlus } from 'lucide-react';
@@ -55,7 +55,6 @@ export default function DashboardPage() {
       return true;
     } catch (error) {
       console.error('Error deleting notebook:', error);
-      toast.error('Error deleting notebook.');
       refresh();
       return false;
     }
@@ -73,6 +72,7 @@ export default function DashboardPage() {
   const [duration, setDuration] = useState(0);
   const [seekTime, setSeekTime] = useState(null);
 
+  const [deletingNotebookIds, setDeletingNotebookIds] = useState(new Set());
   const prevCompletedCount = useRef(0);
 
   useEffect(() => {
@@ -133,17 +133,35 @@ export default function DashboardPage() {
     [getToken]
   );
   const deleteNotebook = async (jobId) => {
-    const success = await deleteNotebookOptimistic(jobId);
+    if (deletingNotebookIds.has(jobId)) return;
 
-    if (success) {
-      toast.success('Notebook deleted');
-      if (currentNotebook?.job_id === jobId) {
-        setShowPlayer(false);
-        setCurrentNotebook(null);
-        setIsSubtitleOpen(false);
+    setDeletingNotebookIds(prev => new Set(prev).add(jobId));
+    try {
+      const success = await deleteNotebookOptimistic(jobId);
+
+      if (success) {
+        toast.success('Notebook deleted');
+        if (currentNotebook?.job_id === jobId) {
+          setShowPlayer(false);
+          setCurrentNotebook(null);
+          setIsSubtitleOpen(false);
+        }
+        // Keep in deleting state until refresh happens
+      } else {
+        toast.error('Failed to delete');
+        setDeletingNotebookIds(prev => {
+          const next = new Set(prev);
+          next.delete(jobId);
+          return next;
+        });
       }
-    } else {
-      toast.error('Failed to delete');
+    } catch (error) {
+      console.error('Delete error:', error);
+      setDeletingNotebookIds(prev => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
     }
   };
 
@@ -266,6 +284,7 @@ export default function DashboardPage() {
                         sourceUrl={nb.source_url}
                         onOpen={() => playNotebook(nb)}
                         onDelete={() => deleteNotebook(nb.job_id)}
+                        isDeleting={deletingNotebookIds.has(nb.job_id)}
                       />
                     </motion.div>
                   ))}
@@ -295,15 +314,17 @@ export default function DashboardPage() {
       </main>
 
       {/* Subtitle Window */}
-      {isSubtitleOpen && (
-        <SubtitleWindow
-          subtitles={subtitleData}
-          currentTime={playerTime}
-          duration={duration}
-          onSeek={setSeekTime}
-          onClose={() => setIsSubtitleOpen(false)}
-        />
-      )}
+      <AnimatePresence>
+        {isSubtitleOpen && (
+          <SubtitleWindow
+            subtitles={subtitleData}
+            currentTime={playerTime}
+            duration={duration}
+            onSeek={setSeekTime}
+            onClose={() => setIsSubtitleOpen(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Audio Player */}
       {showPlayer && currentNotebook && (

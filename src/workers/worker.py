@@ -9,7 +9,7 @@ from typing import Optional
 import boto3
 import dramatiq
 import redis
-from src.api.utils import get_user_id_for_job, publish_notebook_status
+from src.api.utils import get_user_id_for_job, publish_notebook_status, set_job_status
 from boto3.session import Config
 from dotenv import load_dotenv
 from dramatiq import group
@@ -102,7 +102,7 @@ ensure_s3_lifecycle_policy()
 
 # --- DB/Redis Status Helpers ---
 
-def update_db_status(job_id: str, status: str, total_tokens: int = None):
+def update_db_status(job_id: str, status: str, total_tokens: Optional[int] = None):
     try:
         with Session(engine) as session:
             statement = select(Notebook).where(Notebook.job_id == job_id)
@@ -139,25 +139,17 @@ def update_db_status(job_id: str, status: str, total_tokens: int = None):
     except Exception as e:
         logger.error(f"[DB-SYNC] Failed to update/delete DB for {job_id}: {e}")
 
-def update_job_status(job_id, status):
-    redis_client.hset(f"job:{job_id}", mapping={"status": status})
-    if status in ["completed", "failed"]:
-        update_db_status(job_id, status)
-    
-    # Optional: Publish to SSE if utility is available
-    try:
-        user_id = get_user_id_for_job(job_id)
-        if user_id:
-            publish_notebook_status(user_id, job_id, status)
-    except Exception:
-        pass
+def update_job_status(job_id, status, voice=None):
+    """Bridge to the centralized set_job_status utility."""
+    set_job_status(job_id, status, voice=voice)
 
-def update_job_status_with_tokens(job_id, status, total_tokens):
-    redis_client.hset(f"job:{job_id}", mapping={"status": status, "tokens_used": total_tokens})
-    if status == "completed":
-        update_db_status(job_id, status, total_tokens)
-    else:
-        update_db_status(job_id, status)
+def update_job_status_with_tokens(job_id, status, total_tokens, voice=None):
+    """Bridge to the centralized set_job_status utility with token data."""
+    set_job_status(job_id, status, extra={"tokens_used": total_tokens}, voice=voice)
+
+# --- Global Rate Limiters ---
+# Shared across all worker threads/processes via Redis
+tts_limiter = ConcurrentRateLimiter(rate_limiter_backend, "tts_concurrency", limit=5)
 
 # --- Actors: Chunker ---
 
@@ -190,8 +182,12 @@ def process_file_task(user_id, job_id, file_path_or_key, voice):
             if not chunk or not chunk.strip():
                 continue
             cleaned_chunk1 = cleaner1(chunk, abbrevate=False)
+            if not cleaned_chunk1.strip():
+                cleaned_chunk1 = str(chunk) # Fallback to original text if cleaner wiped it out
+            
             cleaned_chunk1_for_tts = cleaner1(chunk, abbrevate=True)
             cleaned_chunk2 = cleaner_stage_2(cleaned_chunk1_for_tts)
+            
             if cleaned_chunk1.strip() or cleaned_chunk2.strip():
                 c1_chunks.append(cleaned_chunk1)
                 c2_chunks.append(cleaned_chunk2)
@@ -229,7 +225,7 @@ def process_speeches(user_id, job_id, voice):
         response = s3.get_object(Bucket="ttsfiles", Key=f"{s3_prefix}/chunks.json")
         chunks = json.loads(response["Body"].read().decode("utf-8"))
         if not chunks:
-            update_job_status(job_id, "failed")
+            update_job_status(job_id, "failed", voice=voice)
             return
         voice_prefix = f"{s3_prefix}/voices/{voice}"
         s3.put_object(Bucket="ttsfiles", Key=f"{voice_prefix}/manifest_data.json", Body=json.dumps([]).encode("utf-8"), ContentType="application/json")
@@ -250,35 +246,43 @@ def process_speeches(user_id, job_id, voice):
         g.add_completion_callback(finalize_manifest.message(user_id, job_id, voice))
         g.run()
     except Exception as e:
-        update_job_status(job_id, "failed")
+        update_job_status(job_id, "failed", voice=voice)
         logger.error(f"process_speeches failed: {e}")
 
-@dramatiq.actor(queue_name="default", store_results=True, max_retries=20, min_backoff=1000)
+@dramatiq.actor(queue_name="default", store_results=True, max_retries=20, min_backoff=2000)
 def process_single_speech(index, text, voice, user_id, job_id):
     # Production Concurrency Guard: Limit to 5 simultaneous SSL connections per worker
-    # to avoid saturating the local tunnel or the GPU engine.
     # Uses the shared redis backend configured in middleware.
-    limiter = ConcurrentRateLimiter(rate_limiter_backend, "tts_concurrency", limit=5)
-    with limiter.acquire():
-        # Check if job was cancelled
-        if redis_client.exists(f"cancelled:{job_id}"):
-            logger.info(f"[CANCEL] Job {job_id} task {index} for {voice} skipped (user deleted notebook)")
-            return None
+    try:
+        with tts_limiter.acquire():
+            # Check if job was cancelled
+            if redis_client.exists(f"cancelled:{job_id}"):
+                logger.info(f"[CANCEL] Job {job_id} task {index} for {voice} skipped (user deleted notebook)")
+                return None
 
-        s3 = get_s3_client()
-        s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
-        try:
+            s3 = get_s3_client()
+            s3_prefix = f"{user_id}/{job_id}/voices/{voice}"
+            
             text = " ".join(map(str, text)) if isinstance(text, list) else str(text)
+            if not text.strip(): return None
+            
             chunk_tokens = calculate_text_tokens(text)
+            logger.info(f"[TTS-START] Job {job_id} Chunk {index} ({chunk_tokens} tokens)")
+            
             audio_data = b""
-            if text.strip():
-                with tts_generator(text, voice) as speech_output:
-                    for data in speech_output.iter_bytes():
-                        if data: audio_data += data
-            if not audio_data: return None
+            with tts_generator(text, voice) as speech_output:
+                for data in speech_output.iter_bytes():
+                    if data: audio_data += data
+            
+            if not audio_data: 
+                logger.warning(f"[TTS-EMPTY] Job {job_id} Chunk {index} returned no audio")
+                return None
+            
             duration = MP3(BytesIO(audio_data)).info.length
             s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/speech{index}.mp3", Body=audio_data, ContentType="audio/mpeg")
+            
             metadata_entry = {"index": index, "filename": f"speech{index}.mp3", "duration": duration, "tokens": chunk_tokens}
+            
             lock = redis_client.lock(f"lock:manifest:{job_id}:{voice}", timeout=30, blocking_timeout=60)
             with lock:
                 meta_key = f"{s3_prefix}/manifest_data.json"
@@ -292,15 +296,18 @@ def process_single_speech(index, text, voice, user_id, job_id):
                 
                 # Increment progress counter (voice-specific)
                 redis_client.hincrby(f"job:{job_id}:{voice}", "completed_chunks", 1)
-                
-                # Partial Refund Tracking: Log consumed tokens globally for this job
-                # This allows us to calculate exactly how many tokens were 'used' vs 'wasted' if deleted mid-way
+                # Partial Refund Tracking
                 redis_client.hincrby(f"job:{job_id}", "consumed_tokens", chunk_tokens)
-                
+            
+            logger.info(f"[TTS-COMPLETE] Job {job_id} Chunk {index} ({duration:.2f}s)")
             return metadata_entry
-        except Exception as e:
-            logger.error(f"process_single_speech error: {e}")
-            raise
+
+    except dramatiq.RateLimitExceeded:
+        logger.info(f"[RATE-LIMIT] Job {job_id} Chunk {index} exceeded concurrency limit, retrying...")
+        raise
+    except Exception as e:
+        logger.error(f"[TTS-ERROR] Job {job_id} Chunk {index} failed: {e}", exc_info=True)
+        raise
 
 @dramatiq.actor(queue_name="default")
 def finalize_manifest(user_id, job_id, voice):
@@ -328,12 +335,12 @@ def finalize_manifest(user_id, job_id, voice):
         s3.put_object(Bucket="ttsfiles", Key=f"{s3_prefix}/subtitles.json", Body=json.dumps(subtitle_data).encode("utf-8"), ContentType="application/json")
         s3.put_object(Bucket="ttsfiles", Key=f"{voice_prefix}/manifest.m3u8", Body="\n".join(manifest_lines).encode("utf-8"), ContentType="application/vnd.apple.mpegurl")
         total_tokens = sum(item.get("tokens", 0) for item in audio_meta)
-        update_job_status_with_tokens(job_id, "completed", total_tokens)
+        update_job_status_with_tokens(job_id, "completed", total_tokens, voice=voice)
         s3.delete_object(Bucket="ttsfiles", Key=f"{voice_prefix}/manifest_data.json")
         
     except Exception as e:
         logger.error(f"finalize_manifest error: {e}")
-        update_db_status(job_id, "failed")
+        update_job_status(job_id, "failed", voice=voice)
 
 @dramatiq.actor(queue_name="default", priority=10) # Low priority background job
 def cleanup_notebook_resources(user_id, job_id):

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
 import ExperienceSection from './components/home/ExperienceSection';
 import SupportedFormats from './components/home/SupportedFormats';
@@ -147,15 +147,17 @@ export default function HomePage() {
       </main>
 
       {/* Subtitle Window */}
-      {isSubtitleOpen && (
-        <SubtitleWindow
-          subtitles={subtitleData}
-          currentTime={playerTime}
-          duration={duration}
-          onSeek={setSeekTime}
-          onClose={() => setIsSubtitleOpen(false)}
-        />
-      )}
+      <AnimatePresence>
+        {isSubtitleOpen && (
+          <SubtitleWindow
+            subtitles={subtitleData}
+            currentTime={playerTime}
+            duration={duration}
+            onSeek={setSeekTime}
+            onClose={() => setIsSubtitleOpen(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Audio Player */}
       {showPlayer && currentNotebook && (

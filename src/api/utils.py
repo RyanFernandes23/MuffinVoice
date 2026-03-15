@@ -50,9 +50,6 @@ def sanitize_display_filename(filename: str) -> str:
     Sanitizes a filename for display and database storage, removing potentially harmful characters.
     Keeps alphanumeric, spaces, periods, hyphens, and underscores.
     """
-    # Using a regex to allow a broader set of "safe" characters while removing potentially malicious ones.
-    # This regex keeps letters, numbers, spaces, periods, hyphens, and underscores.
-    # It also removes leading/trailing spaces and multiple consecutive spaces.
     sanitized = re.sub(r"[^\w\s\.\-]", "", filename)
     sanitized = re.sub(r"\s+", " ", sanitized).strip()
     return sanitized
@@ -81,24 +78,97 @@ def get_unique_notebook_title(
         unique_title = f"{base_name} ({counter}){ext}"
 
 
+def update_db_status(job_id: str, status: str, total_tokens: Optional[int] = None):
+    """
+    Syncs the status to the SQL database, handles token refunds on failure,
+    and actual token usage tracking on completion.
+    """
+    try:
+        with Session(engine) as session:
+            statement = select(Notebook).where(Notebook.job_id == job_id)
+            notebook = session.exec(statement).first()
+            if notebook:
+                if status == "failed":
+                    # Refund all tokens on failure and delete notebook entry
+                    if notebook.tokens_requested > 0:
+                        refund_tokens(
+                            session=session,
+                            user_id=notebook.user_id,
+                            amount=notebook.tokens_requested,
+                            notebook_id=job_id,
+                        )
+                        logger.info(f"[DB-SYNC] Refunded {notebook.tokens_requested} tokens for failed job {job_id}")
+                    
+                    session.delete(notebook)
+                    session.commit()
+                    logger.info(f"[DB-SYNC] Deleted failed job {job_id} from DB.")
+                else:
+                    notebook.status = status
+                    
+                    # Track actual usage and refund difference if completed
+                    if total_tokens is not None and status == "completed":
+                        notebook.tokens_used = total_tokens
+                        if notebook.tokens_requested > total_tokens:
+                            refund_amount = notebook.tokens_requested - total_tokens
+                            refund_tokens(
+                                session=session,
+                                user_id=notebook.user_id,
+                                amount=refund_amount,
+                                notebook_id=job_id,
+                            )
+                            logger.info(
+                                f"[DB-SYNC] Refunded {refund_amount} tokens for job {job_id} "
+                                f"(requested: {notebook.tokens_requested}, actual: {total_tokens})"
+                            )
+                    
+                    session.add(notebook)
+                    session.commit()
+                    logger.info(f"[DB-SYNC] Updated job {job_id} to {status} in SQL")
+            else:
+                logger.warning(f"[DB-SYNC] Job {job_id} not found in DB for status update.")
+    except Exception as e:
+        logger.error(f"[DB-SYNC] Failed to update/delete DB for {job_id}: {e}")
+
+
 def set_job_status(job_id: str, status: str, extra: Optional[dict] = None, voice: Optional[str] = None):
     """
     Updates BOTH Redis (for speed/real-time) and SQL (for persistence).
+    Accepts an optional 'extra' dict for adding fields like 'tokens_used' to Redis.
     Also publishes to SSE clients for real-time updates.
     """
-    # 1. Update Redis
+    # 1. Update Redis (Hot Data)
     data = {"status": status}
     if extra:
         data.update(extra)
     
-    # Use voice-specific key if provided
-    redis_key = f"job:{job_id}:{voice}" if voice else f"job:{job_id}"
-    redis_client.hset(redis_key, mapping=data)
-    logger.info(f"DEBUG: Wrote {redis_key} to Redis with status {status}")
+    # Always update the general job key
+    redis_client.hset(f"job:{job_id}", mapping=data)
+    
+    # If a voice is specified, also update the voice-specific key
+    if voice:
+        redis_client.hset(f"job:{job_id}:{voice}", mapping=data)
+        logger.info(f"DEBUG: Updated status for job {job_id} (voice: {voice}) to {status}")
+    else:
+        logger.info(f"DEBUG: Updated status for job {job_id} to {status}")
 
-    # 2. Sync to SQL (Note: SQL status is usually the 'main' notebook status)
-    update_db_status(job_id, status)
-    logger.info(f"Job {job_id} SQL status updated to {status}")
+    # 2. Sync to SQL (Cold Data)
+    # Sync to SQL only for the "main" job status or terminal states
+    if not voice or status in ["completed", "failed"]:
+        total_tokens = None
+        if extra and "tokens_used" in extra:
+            try:
+                total_tokens = int(extra["tokens_used"])
+            except (ValueError, TypeError):
+                pass
+        update_db_status(job_id, status, total_tokens)
+
+    # 3. Publish to SSE clients
+    try:
+        user_id = get_user_id_for_job(job_id)
+        if user_id:
+            publish_notebook_status(user_id, job_id, status)
+    except Exception as e:
+        logger.warning(f"Failed to publish SSE update for {job_id}: {e}")
 
 
 def calculate_progress(job_status: dict) -> int:
@@ -115,13 +185,14 @@ def calculate_progress(job_status: dict) -> int:
         return 10
     return 0
 
-def get_job_status(job_id: str, voice: Optional[str] = None):
+
+def get_job_status(job_id: str, voice: Optional[str] = None, fallback: bool = True):
     # Try voice-specific key first if voice is provided
     redis_key = f"job:{job_id}:{voice}" if voice else f"job:{job_id}"
     job_status = redis_client.hgetall(redis_key)
     
-    # Fallback to general key if voice-specific doesn't exist
-    if not job_status and voice:
+    # Fallback to general key if voice-specific doesn't exist and fallback is enabled
+    if not job_status and voice and fallback:
         job_status = redis_client.hgetall(f"job:{job_id}")
         
     if not job_status:
@@ -131,7 +202,8 @@ def get_job_status(job_id: str, voice: Optional[str] = None):
     job_status["progress_percent"] = str(progress)
     return job_status
 
-def get_batch_job_statuses(job_voice_pairs: List[tuple]) -> Dict[str, dict]:
+
+def get_batch_job_statuses(job_voice_pairs: List[tuple], fallback: bool = True) -> Dict[str, dict]:
     """Scalable approach: Batch fetch multiple job/voice statuses in ONE Redis round-trip"""
     if not job_voice_pairs: return {}
     
@@ -147,8 +219,8 @@ def get_batch_job_statuses(job_voice_pairs: List[tuple]) -> Dict[str, dict]:
         # Key by jid:voice to prevent collisions
         key = f"{jid}:{voice}"
         
-        if not job_status:
-            # Fallback to general job key if voice-specific doesn't exist
+        if not job_status and fallback:
+            # Fallback to general job key if voice-specific doesn't exist and fallback enabled
             job_status = redis_client.hgetall(f"job:{jid}")
             
         if job_status:
@@ -201,22 +273,20 @@ def get_user_id_for_job(job_id: str) -> Optional[str]:
         return None
 
 
-
-
-def update_db_status(job_id: str, status: str):
+def publish_notebook_status(user_id: str, job_id: str, status: str):
+    """
+    Publishes a status update to a Redis channel for real-time SSE delivery.
+    Format: user:{user_id}:events
+    """
     try:
-        with Session(engine) as session:
-            statement = select(Notebook).where(Notebook.job_id == job_id)
-            notebook = session.exec(statement).first()
-            if notebook:
-                notebook.status = status
-                session.add(notebook)
-                session.commit()
-                logger.info(f"Synced DB status for {job_id} to {status}")
-            else:
-                logger.warning(
-                    f"Could not find notebook {job_id} in DB to update status"
-                )
+        message = {
+            "type": "notebook_status",
+            "job_id": job_id,
+            "status": status,
+            "timestamp": time.time()
+        }
+        channel = f"user:{user_id}:events"
+        redis_client.publish(channel, json.dumps(message))
+        logger.info(f"[SSE-PUBLISH] Status {status} for job {job_id} published to {channel}")
     except Exception as e:
-        logger.error(f"Failed to sync DB status: {e}")
-
+        logger.error(f"Failed to publish SSE status update: {e}")

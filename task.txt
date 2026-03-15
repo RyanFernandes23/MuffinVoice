@@ -15,7 +15,6 @@ demo notebooks.
 
 ------------------------------completed/not tested----------------------------------------------
 13. webpages support.
-14. sse endpoints.
 
 ------------------------------completed------------------------------------------------------------
 19. token consumption db, ui status, and backend check
@@ -42,4 +41,4 @@ dramatiq src.TTS_Workers.tasks
 uv run dramatiq src.workers.chunker_tasks src.workers.tts_tasks
 uv run dramatiq src.workers.worker
 
-uvicorn src.api.main:app --reload
+uv run uvicorn src.api.main:app --reload

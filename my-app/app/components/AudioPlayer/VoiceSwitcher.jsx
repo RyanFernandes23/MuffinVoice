@@ -123,7 +123,11 @@ export default function VoiceSwitcher({
                                                     ? 'bg-black/10 text-black'
                                                     : getStatusBg(effectiveStatus) + ' ' + getStatusColor(effectiveStatus)
                                                     }`}>
-                                                    {effectiveStatus === 'processing' && voice.progress_percent > 0 ? `${voice.progress_percent}%` : effectiveStatus}
+                                                    {effectiveStatus === 'processing' 
+                                                        ? (voice.progress_percent > 0 ? `${voice.progress_percent}%` : 'Processing') 
+                                                        : effectiveStatus === 'not started' 
+                                                            ? 'Process' 
+                                                            : effectiveStatus}
                                                 </span>
                                             </motion.button>
                                         );

@@ -823,8 +823,9 @@ async def check_voice_status(
                 existing_voices.add(voice_name)
 
         # Scalable Voice Enrichment: Fetch progress for all available voices in one trip
+        # DISABLE fallback here because we only want progress if THAT SPECIFIC VOICE is processing
         voice_pairs = [(job_id, v) for v in AVAILABLE_VOICES]
-        all_voice_stats = get_batch_job_statuses(voice_pairs)
+        all_voice_stats = get_batch_job_statuses(voice_pairs, fallback=False)
 
         voices_status = []
         for voice in AVAILABLE_VOICES:
@@ -1092,22 +1093,9 @@ async def cleanup_stale_jobs(
                 except Exception as e:
                     logger.error(f"[CLEANUP] Token refund failed for {job_id}: {e}")
 
-            # 2. Delete S3 objects
-            s3_prefix = f"{user_id}/{job_id}/"
-            try:
-                response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
-                if "Contents" in response:
-                    objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
-                    s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
-                    logger.info(f"[CLEANUP] Deleted {len(objects_to_delete)} S3 objects for {job_id}")
-            except Exception as e:
-                logger.error(f"[CLEANUP] S3 cleanup failed for {job_id}: {e}")
-
-            # 3. Delete Redis key
-            try:
-                redis_client.delete(f"job:{job_id}")
-            except Exception as e:
-                logger.error(f"[CLEANUP] Redis cleanup failed for {job_id}: {e}")
+            # 2. Trigger worker-based deep cleanup (S3 + Redis scan)
+            cleanup_notebook_resources.send(user_id, job_id)
+            logger.info(f"[CLEANUP] Deep cleanup task sent for stale job {job_id}")
 
             # 4. Delete associated notes
             try:

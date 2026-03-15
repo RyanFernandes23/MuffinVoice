@@ -13,7 +13,7 @@ from ..config import settings
 from ..utils import get_session
 from ..schema import User, PaymentEvent, Plan, Notebook, Subscription, DeletedUser
 from src.utils.payment_client import cancel_razorpay_subscription
-from src.workers.worker import get_s3_client
+from src.workers.worker import get_s3_client, cleanup_notebook_resources
 from src.utils.RedisClient import redis_client
 
 webhooks_router = APIRouter(
@@ -318,26 +318,23 @@ def handle_user_deleted(user_data: Dict[str, Any], db: Session):
     # Delete notebooks (notes auto-delete via CASCADE)
     notebooks = db.exec(select(Notebook).where(Notebook.user_id == clerk_user_id)).all()
 
-    # Delete all S3 files for the user (entire user folder)
+    # 1. Trigger thorough background cleanup for each notebook (Deep S3 + Redis scan)
+    for nb in notebooks:
+        cleanup_notebook_resources.send(user.user_id, nb.job_id)
+        print(f"Queued deep cleanup for job {nb.job_id}")
+
+    # 2. Final sweep of the user's S3 folder (to catch chunks/metadata not attached to notebooks)
     s3 = get_s3_client()
     try:
         s3_prefix = f"{user.user_id}/"
-        response = s3.list_objects_v2(Bucket="ttsfiles", Prefix=s3_prefix)
-        if "Contents" in response:
-            objects_to_delete = [{"Key": obj["Key"]} for obj in response["Contents"]]
-            s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects_to_delete})
-            print(
-                f"Deleted {len(objects_to_delete)} S3 objects for user {user.user_id}"
-            )
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket="ttsfiles", Prefix=s3_prefix):
+            if "Contents" in page:
+                objects = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                s3.delete_objects(Bucket="ttsfiles", Delete={"Objects": objects})
+                print(f"User Clean: S3 prefix {s3_prefix} flushed")
     except Exception as e:
-        print(f"Error deleting S3 objects for user {user.user_id}: {e}")
-
-    # Delete Redis keys for each notebook
-    for nb in notebooks:
-        try:
-            redis_client.delete(f"job:{nb.job_id}")
-        except Exception as e:
-            print(f"Error deleting Redis key for job {nb.job_id}: {e}")
+        print(f"Error in final user S3 sweep: {e}")
 
     # Delete notebooks from database
     for nb in notebooks:

@@ -30,6 +30,7 @@ export default function NotebookCard({
   progress_percent = 0,
   onOpen,
   onDelete,
+  isDeleting = false,
   isDemo = false,
 }) {
   // Truncate the title
@@ -166,10 +167,15 @@ export default function NotebookCard({
         ) : isFailed ? (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all border border-red-500/20"
+            disabled={isDeleting}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+              isDeleting 
+                ? 'bg-red-500/5 text-red-400/50 border-red-500/10 cursor-not-allowed' 
+                : 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border-red-500/20'
+            }`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {isDeleting ? 'Deleting...' : 'Delete'}
           </button>
         ) : (
           <div className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-neutral-800 text-neutral-500 cursor-not-allowed border border-white/[0.06]">
@@ -181,9 +187,14 @@ export default function NotebookCard({
         {!isDemo && !isFailed && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
-            className="p-2 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.06]"
+            disabled={isDeleting}
+            className={`p-2 rounded-lg transition-all border border-white/[0.06] ${
+              isDeleting 
+                ? 'text-red-400/50 cursor-not-allowed' 
+                : 'text-neutral-500 hover:text-red-400 hover:bg-red-500/10'
+            }`}
           >
-            <Trash2 className="w-4 h-4" />
+            {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
           </button>
         )}
       </div>
