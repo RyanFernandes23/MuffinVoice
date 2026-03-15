@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -296,6 +297,7 @@ def process_single_speech(index, text, voice, user_id, job_id):
                 
                 # Increment progress counter (voice-specific)
                 redis_client.hincrby(f"job:{job_id}:{voice}", "completed_chunks", 1)
+                redis_client.hset(f"job:{job_id}", "last_updated_at", str(time.time()))
                 # Partial Refund Tracking
                 redis_client.hincrby(f"job:{job_id}", "consumed_tokens", chunk_tokens)
             

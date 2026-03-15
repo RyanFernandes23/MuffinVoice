@@ -61,7 +61,7 @@ from src.utils.RedisClient import redis_client
 
 notebooks_router = APIRouter(prefix="/api", tags=["notebooks", "tts", "s3"])
 
-STALE_JOB_TIMEOUT_MINUTES = 10
+STALE_JOB_TIMEOUT_MINUTES = 60
 
 
 @notebooks_router.post("/upload_file")
@@ -1054,18 +1054,23 @@ async def cleanup_stale_jobs(
 
     Called automatically by the frontend on page load (self-healing),
     or manually for admin cleanup.
+    
+    In production, this only marks jobs as 'failed' and refunds tokens.
+    It NEVER deletes files or DB records automatically to avoid race conditions.
     """
     user_id = token_payload.decoded.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: no user ID")
 
-    cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=STALE_JOB_TIMEOUT_MINUTES)
+    # Use naive UTC for DB comparison to avoid timezone mismatch issues
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff_time = now_utc - timedelta(minutes=STALE_JOB_TIMEOUT_MINUTES)
 
     # Find stale notebooks for this user
+    # We broaden the search slightly to ensure we check heartbeats for anything old-ish
     statement = select(Notebook).where(
         Notebook.user_id == user_id,
         Notebook.status.in_(["processing", "queued"]),
-        Notebook.created_at < cutoff_time,
     )
     stale_notebooks = session.exec(statement).all()
 
@@ -1076,8 +1081,38 @@ async def cleanup_stale_jobs(
     s3 = get_s3_client()
 
     for notebook in stale_notebooks:
+        # DB created_at might be naive or aware depending on driver; force compare
+        created_at = notebook.created_at.replace(tzinfo=None) if notebook.created_at.tzinfo else notebook.created_at
+        
+        # Only even consider jobs older than 10 minutes (safety floor)
+        if created_at > (now_utc - timedelta(minutes=10)):
+            continue
+
         job_id = notebook.job_id
         try:
+            # SAFETY CHECK: Check if the job is actually alive in Redis
+            status_data = get_job_status(job_id)
+            if status_data:
+                last_updated = status_data.get("last_updated_at")
+                if last_updated:
+                    try:
+                        time_since_update = time.time() - float(last_updated)
+                        # If updated in last 20 minutes, it is NOT stale
+                        if time_since_update < 1200: 
+                            continue
+                    except: pass
+                
+                # If it's more than 2 hours old, we are more aggressive
+                is_very_old = created_at < (now_utc - timedelta(hours=2))
+                
+                if not is_very_old:
+                    # If it has progress and is less than 2 hours old, leave it alone
+                    progress = int(status_data.get("progress_percent", 0))
+                    if progress > 0:
+                        continue
+            
+            # If we reached here, the job is truly stale (or very old with no heartbeat)
+
             # 1. Refund tokens
             if notebook.tokens_requested and notebook.tokens_requested > 0:
                 try:
@@ -1093,19 +1128,26 @@ async def cleanup_stale_jobs(
                 except Exception as e:
                     logger.error(f"[CLEANUP] Token refund failed for {job_id}: {e}")
 
-            # 2. Trigger worker-based deep cleanup (S3 + Redis scan)
-            cleanup_notebook_resources.send(user_id, job_id)
-            logger.info(f"[CLEANUP] Deep cleanup task sent for stale job {job_id}")
+            # If we reached here, the job is truly stale (or very old with no heartbeat)
 
-            # 4. Delete associated notes
-            try:
-                from sqlmodel import delete as sql_delete
-                session.execute(sql_delete(Note).where(Note.job_id == job_id))
-            except Exception as e:
-                logger.error(f"[CLEANUP] Note deletion failed for {job_id}: {e}")
+            # 1. Refund tokens
+            if notebook.tokens_requested and notebook.tokens_requested > 0:
+                try:
+                    refund_tokens(
+                        session=session,
+                        user_id=user_id,
+                        amount=notebook.tokens_requested,
+                        notebook_id=job_id,
+                    )
+                    logger.info(
+                        f"[CLEANUP] Refunded {notebook.tokens_requested} tokens for stale job {job_id}"
+                    )
+                except Exception as e:
+                    logger.error(f"[CLEANUP] Token refund failed for {job_id}: {e}")
 
-            # 5. Delete notebook from DB
-            session.delete(notebook)
+            # 2. Mark as failed in DB (Persistence maintained)
+            notebook.status = "failed"
+            session.add(notebook)
 
             cleaned_jobs.append({
                 "job_id": job_id,
@@ -1113,10 +1155,10 @@ async def cleanup_stale_jobs(
                 "tokens_refunded": notebook.tokens_requested,
             })
 
-            logger.info(f"[CLEANUP] Cleaned stale job {job_id} (title: {notebook.title})")
+            logger.info(f"[CLEANUP] Marked stale job {job_id} as failed (title: {notebook.title})")
 
         except Exception as e:
-            logger.error(f"[CLEANUP] Failed to clean job {job_id}: {e}")
+            logger.error(f"[CLEANUP] Failed to process stale job {job_id}: {e}")
 
     session.commit()
 

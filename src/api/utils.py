@@ -89,7 +89,7 @@ def update_db_status(job_id: str, status: str, total_tokens: Optional[int] = Non
             notebook = session.exec(statement).first()
             if notebook:
                 if status == "failed":
-                    # Refund all tokens on failure and delete notebook entry
+                    # Refund tokens on failure but KEEP the record so the user can see it
                     if notebook.tokens_requested > 0:
                         refund_tokens(
                             session=session,
@@ -99,9 +99,10 @@ def update_db_status(job_id: str, status: str, total_tokens: Optional[int] = Non
                         )
                         logger.info(f"[DB-SYNC] Refunded {notebook.tokens_requested} tokens for failed job {job_id}")
                     
-                    session.delete(notebook)
+                    notebook.status = "failed"
+                    session.add(notebook)
                     session.commit()
-                    logger.info(f"[DB-SYNC] Deleted failed job {job_id} from DB.")
+                    logger.info(f"[DB-SYNC] Marked job {job_id} as failed (Persistence maintained)")
                 else:
                     notebook.status = status
                     
@@ -137,7 +138,7 @@ def set_job_status(job_id: str, status: str, extra: Optional[dict] = None, voice
     Also publishes to SSE clients for real-time updates.
     """
     # 1. Update Redis (Hot Data)
-    data = {"status": status}
+    data = {"status": status, "last_updated_at": str(time.time())}
     if extra:
         data.update(extra)
     
